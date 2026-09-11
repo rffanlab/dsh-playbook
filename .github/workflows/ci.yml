@@ -4,14 +4,32 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
       - run: npm test
       - run: npm run check
       - run: npm run packcheck
+      - name: Package source and installable bundle
+        if: matrix.node == 24
+        run: |
+          mkdir -p /tmp/dsh-playbook-artifacts
+          git archive HEAD -o /tmp/dsh-playbook-artifacts/source.tar
+          npm pack --pack-destination /tmp/dsh-playbook-artifacts
+      - uses: actions/upload-artifact@v4
+        if: matrix.node == 24
+        with:
+          name: dsh-playbook-source-and-package
+          path: /tmp/dsh-playbook-artifacts
+          retention-days: 14
