@@ -1,0 +1,4 @@
+# Installing with `dsh plugin` activates the playbook engine automatically.
+- insert:
+    - id: dsh-playbook
+      name: 'dsh-playbook'

@@ -1,0 +1,46 @@
+{
+  "id": "bug-fix-custom",
+  "version": "1.0.0",
+  "name": "Bug Fix (custom example)",
+  "description": "Example user-authored playbook loaded from ~/.dsh/playbooks.",
+  "stages": [
+    {
+      "id": "reproduce",
+      "mode": "guided",
+      "objective": "Reproduce the defect without modifying implementation code.",
+      "tools": { "deny": ["write", "edit"] },
+      "gate": {
+        "evidence": [
+          { "key": "reproduction", "type": "string", "minLength": 12 },
+          { "key": "observed_behavior", "type": "string", "minLength": 8 }
+        ]
+      }
+    },
+    {
+      "id": "implement",
+      "mode": "guided",
+      "objective": "Implement the smallest safe fix.",
+      "gate": {
+        "evidence": [
+          { "key": "changed_files", "type": "array", "minItems": 1 },
+          { "key": "change_summary", "type": "string", "minLength": 12 }
+        ]
+      }
+    },
+    {
+      "id": "verify",
+      "mode": "guided",
+      "objective": "Run verification and prove the defect is fixed.",
+      "gate": {
+        "evidence": [
+          { "key": "fixed", "type": "boolean", "equals": true }
+        ],
+        "observedTools": [
+          { "name": "bash", "minCalls": 1, "minSuccesses": 1 }
+        ]
+      },
+      "retry": { "maxAttempts": 2, "onExhausted": "branch:implement" },
+      "next": null
+    }
+  ]
+}
