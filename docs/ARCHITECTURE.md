@@ -47,3 +47,11 @@ planned:
 - independent reviewer-subagent validators
 - human approval gates
 - historical metric gates
+
+## v0.2 routing layer
+
+`routing.js` owns bounded literal metadata validation, heuristic recommendation and session-local selection. `automation.js` wraps the public pre-step waterfall, preserves downstream rejection/message identity/series flags, excludes child prompts and contributes the selected stage to the same accepted step. Long or ambiguous tasks are handed to the existing Agent for explicit semantic selection; work tools remain gated while a selection is pending. `tool.js` is the SDK-neutral definition; `index.js` wraps it in the actual DSH `defineTool` and supplies `createUserMessage`.
+
+Hydration is awaited before startup mutations. Selection never replaces an active run. Gate constraints are fully rendered. Accepted task/routing metadata live in durable `run.input`; per-session automatic-mode overrides are intentionally transient. Tool observations carry run/stage/attempt/epoch identity, so late results cannot satisfy a later visit. A bounded gate-submission budget terminates branch cycles. Failed persistence rolls back in-memory run mutations.
+
+Template coverage and state-machine fixtures establish contracts only. They do not prove semantic evidence, operational permissions, production compatibility, or real-model task quality. CI distinguishes dependency-free unit tests, packed-file contracts, and real SDK smoke; target-version Web/Profile/browser/model verification remains separate.

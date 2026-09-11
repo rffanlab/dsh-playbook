@@ -1,6 +1,6 @@
 {
   "name": "dsh-playbook",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Expert playbook engine with executable stages, quality gates, retries, branching, and tool policy for DeepSeek Harness",
   "type": "module",
   "main": "./src/plugin.js",
@@ -9,7 +9,8 @@
     "./client": "./lib/client.js",
     "./core": "./src/core.js",
     "./engine": "./src/engine.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./routing": "./src/routing.js"
   },
   "files": [
     "src/**/*.js",
@@ -18,15 +19,18 @@
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/*.md"
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/core.js && node --check src/engine.js && node --check src/catalog.js && node --check src/state.js && node --check src/builtins.js && node --check src/index.js && node --check src/plugin.js && node --check lib/client.js",
-    "packcheck": "npm pack --dry-run --json"
+    "check": "node scripts/check.mjs",
+    "packcheck": "node scripts/packcheck.mjs",
+    "sdkcheck": "node scripts/sdk-smoke.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "*"
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-llm": "*"
   },
   "engines": {
     "node": ">=20"

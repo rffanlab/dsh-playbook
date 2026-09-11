@@ -33,3 +33,13 @@ jobs:
           name: dsh-playbook-source-and-package
           path: /tmp/dsh-playbook-artifacts
           retention-days: 14
+  sdk-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install --ignore-scripts --no-package-lock
+      - run: npm ls @deepseek-ai/dsh-tools @deepseek-ai/dsh-llm
+      - run: npm run sdkcheck

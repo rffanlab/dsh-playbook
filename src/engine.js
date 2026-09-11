@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { evaluateGate, formatStageInstruction, normalizePlaybook, publicStage, stageById, toolPolicyDecision } from './core.js'
 
 function nowIso(clock) {
@@ -13,11 +14,13 @@ function emptyObservations() {
 }
 
 function runIdOf(sessionId, playbookId, clock) {
-  return `${playbookId}:${sessionId}:${clock()}`
+  return `${playbookId}:${sessionId}:${clock()}:${randomUUID()}`
 }
 
 export class PlaybookEngine {
-  constructor({ clock = Date.now, persist = async () => {} } = {}) {
+  constructor({ clock = Date.now, persist = async () => {}, maxSubmissions = 64 } = {}) {
+    if (!Number.isSafeInteger(maxSubmissions) || maxSubmissions < 1) throw new Error('maxSubmissions must be positive')
+    this.maxSubmissions = maxSubmissions
     this.clock = clock
     this.persist = persist
     this.catalog = new Map()
@@ -26,7 +29,12 @@ export class PlaybookEngine {
   }
 
   serialize(task) {
-    const next = this.queue.then(task, task)
+    // A failed durable write must not leave an uncommitted run active in memory.
+    const transaction = async () => {
+      const before = new Map([...this.runs].map(([key, value]) => [key, clone(value)]))
+      try { return await task() } catch (error) { this.runs = before; throw error }
+    }
+    const next = this.queue.then(transaction, transaction)
     this.queue = next.catch(() => {})
     return next
   }
@@ -49,7 +57,7 @@ export class PlaybookEngine {
 
   listPlaybooks() {
     return [...this.catalog.values()]
-      .map(({ playbook, source }) => ({ id: playbook.id, name: playbook.name, version: playbook.version, description: playbook.description, stages: playbook.stages.length, source }))
+      .map(({ playbook, source }) => ({ id: playbook.id, name: playbook.name, version: playbook.version, description: playbook.description, stages: playbook.stages.length, routing: clone(playbook.routing), source }))
       .sort((a, b) => a.id.localeCompare(b.id))
   }
 
@@ -91,8 +99,9 @@ export class PlaybookEngine {
     return playbook ? stageById(playbook, run.stageId) : undefined
   }
 
-  async start(sessionId, playbookId, input = {}) {
+  async start(sessionId, playbookId, input = {}, { signal } = {}) {
     return this.serialize(async () => {
+      signal?.throwIfAborted()
       const key = String(sessionId)
       if (this.activeRun(key)) throw new Error(`session ${key} already has an active playbook`)
       const playbook = this.getPlaybook(playbookId)
@@ -108,6 +117,7 @@ export class PlaybookEngine {
         state: 'active',
         stageId: playbook.initialStage,
         stageAttempt: 1,
+        stageEpoch: 1,
         input: clone(input ?? {}),
         evidence: {},
         observations: emptyObservations(),
@@ -138,12 +148,15 @@ export class PlaybookEngine {
         state: run.state,
         stageId: run.stageId,
         stageAttempt: run.stageAttempt,
+        stageEpoch: run.stageEpoch ?? 0,
         startedAt: run.startedAt,
         updatedAt: run.updatedAt,
         finishedAt: run.finishedAt,
       },
       stage: stage ? publicStage(stage) : null,
       instruction: stage ? formatStageInstruction(stage, run.stageAttempt) : null,
+      input: clone(run.input ?? {}),
+      evidence: clone(run.evidence ?? {}),
       observations: clone(run.observations ?? {}),
       lastGate: clone(run.lastGate ?? null),
     }
@@ -155,6 +168,7 @@ export class PlaybookEngine {
       const run = this.activeRun(key)
       if (!run) return false
       if (!event || typeof event.name !== 'string' || event.name === 'playbook') return false
+      if (event.runId !== undefined && (event.runId !== run.id || event.stageId !== run.stageId || event.attempt !== run.stageAttempt || (event.epoch !== undefined && event.epoch !== (run.stageEpoch ?? 0)))) return false
       const row = run.observations[event.name] ?? { calls: 0, successes: 0, failures: 0, lastAt: null, lastCallId: null }
       row.calls += 1
       if (event.isError) row.failures += 1
@@ -168,8 +182,9 @@ export class PlaybookEngine {
     })
   }
 
-  async submit(sessionId, { stageId, evidence = {}, note = '' } = {}) {
+  async submit(sessionId, { stageId, evidence = {}, note = '', signal } = {}) {
     return this.serialize(async () => {
+      signal?.throwIfAborted()
       const key = String(sessionId)
       const run = this.activeRun(key)
       if (!run) throw new Error(`session ${key} has no active playbook`)
@@ -180,6 +195,16 @@ export class PlaybookEngine {
       if (stageId !== undefined && stageId !== stage.id) throw new Error(`stage mismatch: current=${stage.id}, submitted=${stageId}`)
       if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) throw new Error('evidence must be an object')
       const at = nowIso(this.clock)
+      const submissions = run.history.filter(event => event.type === 'gate_passed' || event.type === 'gate_failed').length
+      if (submissions >= this.maxSubmissions) {
+        run.state = 'failed'
+        run.finishedAt = at
+        run.updatedAt = at
+        run.lastGate = { stageId: stage.id, attempt: run.stageAttempt, passed: false, failures: ['total submission budget exhausted'], at }
+        run.history.push({ type: 'run_failed', at, stageId: stage.id, reason: 'submission_budget' })
+        await this.save()
+        return this.status(key)
+      }
       const gate = evaluateGate(stage, evidence, run.observations)
       run.lastGate = { stageId: stage.id, attempt: run.stageAttempt, passed: gate.passed, failures: gate.failures, at }
       run.evidence[stage.id] = clone(evidence)
@@ -194,12 +219,14 @@ export class PlaybookEngine {
         } else {
           run.stageId = stage.next
           run.stageAttempt = 1
+          run.stageEpoch = (run.stageEpoch ?? 0) + 1
           run.observations = emptyObservations()
           run.updatedAt = at
           run.history.push({ type: 'stage_entered', at, stageId: stage.next, from: stage.id, reason: 'gate_passed' })
         }
       } else if (run.stageAttempt < stage.retry.maxAttempts) {
         run.stageAttempt += 1
+        run.stageEpoch = (run.stageEpoch ?? 0) + 1
         run.observations = emptyObservations()
         run.updatedAt = at
         run.history.push({ type: 'stage_retry', at, stageId: stage.id, attempt: run.stageAttempt })
@@ -217,6 +244,7 @@ export class PlaybookEngine {
         if (target) {
           run.stageId = target
           run.stageAttempt = 1
+          run.stageEpoch = (run.stageEpoch ?? 0) + 1
           run.observations = emptyObservations()
           run.updatedAt = at
           run.history.push({ type: 'stage_entered', at, stageId: target, from: stage.id, reason })

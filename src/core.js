@@ -1,3 +1,5 @@
+import { normalizeRouting } from './routing.js'
+
 export const PLAYBOOK_SCHEMA_VERSION = 1
 export const STAGE_MODES = new Set(['strict', 'guided', 'free'])
 export const RUN_STATES = new Set(['active', 'completed', 'failed', 'cancelled'])
@@ -158,6 +160,7 @@ export function normalizePlaybook(input) {
     name: input.name === undefined ? id : asNonEmptyString(input.name, 'playbook.name'),
     description: input.description === undefined ? '' : String(input.description),
     goal: input.goal === undefined ? '' : String(input.goal),
+    routing: normalizeRouting(input.routing),
     initialStage,
     stages,
   }
@@ -238,7 +241,7 @@ export function formatStageInstruction(stage, attempt = 1) {
     `Attempt: ${attempt}/${stage.retry.maxAttempts}`,
   ]
   if (stage.instructions.length) lines.push('Instructions:', ...stage.instructions.map(item => `- ${item}`))
-  if (stage.gate.evidence.length) lines.push('Required evidence:', ...stage.gate.evidence.map(rule => `- ${rule.key} (${rule.type})`))
+  if (stage.gate.evidence.length) lines.push('Required evidence:', ...stage.gate.evidence.map(rule => `- ${rule.key}: ${JSON.stringify(rule)}`))
   if (stage.gate.observedTools.length) lines.push('Observed-tool requirements:', ...stage.gate.observedTools.map(rule => `- ${rule.name}: calls>=${rule.minCalls ?? 0}, successes>=${rule.minSuccesses ?? 0}, failures>=${rule.minFailures ?? 0}`))
   if (stage.mode === 'strict' && stage.tools.allow) lines.push(`Strict tool allowlist: ${stage.tools.allow.join(', ') || '(none)'}`)
   if (stage.tools.deny?.length) lines.push(`Denied tools: ${stage.tools.deny.join(', ')}`)

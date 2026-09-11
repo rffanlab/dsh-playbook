@@ -1,0 +1,13 @@
+import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import assert from 'node:assert/strict'
+const packed = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8', shell: process.platform === 'win32' })
+if (packed.error) throw packed.error
+if (packed.status !== 0) throw new Error(packed.stderr)
+const [info] = JSON.parse(packed.stdout), paths = new Set(info.files.map(file => file.path))
+const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+for (const entry of Object.values(pkg.exports)) if (typeof entry === 'string') assert.ok(paths.has(entry.replace(/^\.\//, '')), `Missing packed export: ${entry}`)
+assert.ok(pkg.exports['./client'], 'dsh.client requires an exported ./client bundle')
+assert.ok(paths.has(pkg.dsh.bundle.patch.replace(/^\.\//, '')))
+for (const required of ['src/sops.js', 'src/routing.js', 'src/automation.js', 'src/tool.js', 'README.md', 'README.en.md', 'docs/SOP-CATALOG.md']) assert.ok(paths.has(required), `Missing ${required}`)
+console.log(`Packed-contract checks passed: ${paths.size} files, ${info.size} bytes.`)

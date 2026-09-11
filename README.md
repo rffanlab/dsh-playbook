@@ -2,184 +2,104 @@
 
 [English](README.en.md)
 
-**把专家已经验证过的工作方法，变成 DeepSeek Harness 可以强制执行、验收、失败回退和持续复用的 Playbook。**
+**给任务，自动选择 SOP，再按阶段和验收条件执行。**
 
-> 不要求每一个 AI 都先摸索成大师；先把大师的方法留下，再让普通 AI 按这个方法稳定工作。
+v0.2.0 内置 **19 条工作流程**，覆盖开发、审查、发布准备、故障恢复、服务/模型部署、视频、公众号、音乐、调研、数据分析和 SOP 编写。它是 DeepSeek Harness 插件，不是另一个聊天 Agent。
 
-## 为什么不是另一个 Skill 管理器
+## 直接开始
 
-Skill 可以告诉模型“应该怎么做”，但模型仍可能认为自己已经完成。`dsh-playbook` 把流程提升为运行时约束：
-
-- **Stage**：任务被拆成明确阶段。
-- **Gate**：只有满足结构化验收条件才能进入下一阶段。
-- **Observed Tool Evidence**：Gate 可以要求 DSH 实际观测到工具调用/成功/失败次数，减少“模型自己说测试通过”的情况。
-- **Tool Policy**：STRICT 阶段可以使用 DSH 的单调 Tool Guard 硬限制工具；deny 规则始终硬执行。
-- **Retry / Branch**：Gate 失败后按专家预先设计的策略重试、失败或退回上一阶段。
-- **Durable Run State**：运行状态默认保存在 `~/.dsh/playbook-state.json`，不会只存在于模型上下文里。
-- **Version Pinning**：启动时把 Playbook 快照固化进 run；中途 reload 新版本不会偷偷改变正在执行的流程。
-- **Dynamic Stage Context**：当前 Stage 契约会按 Session 动态进入系统提示词，人工从 Web/命令启动后模型也会自动看到当前规则。
-
-探索不是默认工作方式；只有 Playbook 明确设计了 fallback 时才进入探索。
-
-## MVP 能做什么
-
-安装后注册一个模型工具：`playbook`。
-
-模型可执行：
-
-- `list`：查看 Playbook
-- `start`：在当前 Session 启动 Playbook
-- `status`：读取当前 Stage / Gate
-- `submit`：提交结构化 evidence，由插件判 Gate
-- `reload`：重新加载用户 Playbook
-- `cancel`：取消当前运行
-
-同时提供 `/playbook` 命令用于人工查看和控制，并在 Web 设置页增加 **Playbook** 面板：可查看当前会话运行状态、Gate、工具观测，并直接启动/取消 Playbook。
-
-### 三种 Stage 模式
-
-- `strict`：如果配置 `tools.allow`，其他工具会被硬拒绝；`tools.deny` 也会硬拒绝。
-- `guided`：流程和 Gate 强制执行，工具 allowlist 仅作为说明；deny 仍硬拒绝。
-- `free`：允许创造性解决问题，但仍必须通过 Gate；deny 仍硬拒绝。
-
-## 安装
-
-当前开发版直接从 GitHub 加到 Web profile：
+在运行原 DSH 服务的相同账号、相同 `DSH_HOME` 和 Web Profile 中更新：
 
 ```bash
-dsh plugin --profile web add github:rffanlab/dsh-playbook
+dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 ```
 
-开发分支测试可指定：
+重启 DSH，刷新 Web 页面，打开新会话，直接说：
 
-```bash
-dsh plugin --profile web add github:rffanlab/dsh-playbook#feat/playbook-mvp
-```
+> 给 DSH 开发一个图片管理插件。
 
-插件的 `cordis.patch.yml` 会自动加入 DSH profile，无需手工改 `cordis.yml`。
+> 帮我写一篇公众号文章介绍这个插件。
 
-## 用户 Playbook
+> 在 Ubuntu 部署 Qwen 模型。
 
-默认目录：
+**不需要 `/playbook start`，不需要手写 JSON，也不需要你逐步提交 evidence。**
+
+明确匹配时插件直接启动；匹配有歧义时当前 Agent 先查询候选、读取流程并选择。只在目标、范围或输入确实不清楚时询问你，而不是问你“想用哪个 SOP”。闲聊与普通用法解释不会强制启动工作流。
+
+## 如何执行
 
 ```text
-~/.dsh/playbooks/*.json
+用户任务 → 规则匹配 / Agent 语义选流 → 当前阶段
+                                       ↓
+                                提交真实 evidence
+                                       ↓
+                          Gate 通过 → 下一阶段 / 完成
+                          Gate 失败 → 重试 / 回退 / 失败
 ```
 
-可通过环境变量修改：
+系统默认开启自动接单。规则使用中英文词组，不会新增分类模型或要求另配 API Key。
+活动流程不会被一条补充说明自动替换；独立新任务建议开新会话。当前不做自动多 SOP 并行编排。
+
+完整用法：[自动接单说明](docs/AUTO-ROUTING.md)。完整目录：[19 条 SOP 与验收要求](docs/SOP-CATALOG.md)。
+
+## 内置范围
+
+| 类别 | SOP ID |
+|---|---|
+| 开发与审查 | `bug-fix`、`feature-development`、`plugin-development`、`dsh-plugin-development`、`code-review` |
+| 发布、恢复与部署 | `release`、`incident-response`、`linux-service-deploy`、`model-deployment` |
+| 内容与音乐 | `short-video-production`、`bilibili-video-production`、`video-review`、`wechat-article`、`music-production`、`music-release` |
+| 调研与通用接单 | `research-report`、`data-analysis`、`sop-authoring`、`task-intake` |
+
+每条都有具体步骤、指令、产物证据和失败策略。`task-intake` 是明确标注的未知任务接单兜底，不冒充领域专家方法。
+这些是可测试的**起始模板**，尚不意味着已在真实业务中证明“最优”或“弱模型等于强模型”。
+
+## 保留人工控制
+
+在 **DSH 聊天输入框**输入，不是终端：
 
 ```text
-DSH_PLAYBOOK_DIR=/path/to/playbooks
-DSH_PLAYBOOK_STATE=/path/to/playbook-state.json
-```
-
-复制 `examples/bug-fix.playbook.json` 到该目录，然后执行：
-
-```text
-/playbook reload
 /playbook list
+/playbook inspect dsh-plugin-development
+/playbook recommend 帮我写公众号文章
+/playbook status
+/playbook status json
+/playbook auto off
+/playbook auto on
+/playbook start bug-fix
+/playbook cancel
+/playbook reload
 ```
 
-当前 MVP 首先支持 JSON；YAML、可视化编辑器和 Playbook Marketplace 放在后续版本，避免第一版把精力耗在格式而不是执行闭环上。
+`recommend` 不启动；`auto off` 关闭当前会话的后续自动接单，不取消已有流程，Host 重启后恢复默认。整个部署默认关闭可设置 `DSH_PLAYBOOK_AUTO_ROUTE=0`。
 
-## Playbook 示例
+Web 设置 → 插件 → **Playbook** 原有面板继续用于查看目录、当前会话 Stage、Gate 和工具观测，以及手动启动/取消。自动接单不需要先打开这个面板。
 
-```json
-{
-  "id": "verify-change",
-  "version": "1.0.0",
-  "stages": [
-    {
-      "id": "inspect",
-      "mode": "strict",
-      "objective": "先检查，再修改",
-      "tools": { "allow": ["read", "grep"] },
-      "gate": {
-        "evidence": [
-          { "key": "root_cause", "type": "string", "minLength": 20 }
-        ]
-      }
-    },
-    {
-      "id": "verify",
-      "mode": "guided",
-      "objective": "运行测试并证明修改有效",
-      "gate": {
-        "evidence": [
-          { "key": "fixed", "type": "boolean", "equals": true }
-        ],
-        "observedTools": [
-          { "name": "bash", "minCalls": 1, "minSuccesses": 1 }
-        ]
-      },
-      "retry": { "maxAttempts": 2, "onExhausted": "branch:inspect" },
-      "next": null
-    }
-  ]
-}
-```
+## 自定义 SOP
 
-这里 `fixed=true` 是模型提交的声明，而 `bash minSuccesses=1` 来自 Harness 对真实工具结果的观测。两类证据同时存在时，Gate 才能通过。
+默认加载 `${DSH_HOME:-~/.dsh}/playbooks/*.json`；可用 `DSH_PLAYBOOK_DIR` 覆盖目录，用 `DSH_PLAYBOOK_STATE` 覆盖状态文件路径。
+执行 `/playbook reload` 加载新定义。相同 ID 覆盖内置目录项，但不会修改已启动任务的固定快照。
 
-## 内置 `bug-fix` Playbook
+路由支持 `routing.groups`、`keywords`、`exclude`、`priority`、`autoStart` 和 `examples`；详见自动接单说明。没有路由规则的自定义 SOP 仍可由 Agent 或用户显式选择。
 
-MVP 自带一条可以立刻做实验的软件修 Bug 流程：
+模型工具新增 `recommend`、`inspect`、`route`，保留 `list/start/status/submit/reload/cancel`。`submit` 现在要求明确提供 `stage_id`。
 
-```text
-reproduce → root-cause → implement → verify → review
-                              ↑          │
-                              └──────────┘ verification failed
-```
+## 执行保障与边界
 
-关键限制：
+- 保留 Stage/Gate、重试分支、固定版本快照和持久运行状态；加载状态完成后才接受自动启动。
+- 当前阶段提示包含完整 evidence 类型、长度、条数和固定值要求，并带有有界的上游证据摘要。
+- 默认每次运行最多 64 次 Gate 提交，避免回退循环无限持续；不是总 token/时间预算。
+- 保留 `strict/guided/free` 模式。工具名约束由 DSH guard 执行，**不是 OS 沙箱**；禁止 `write/edit` 不等于禁止所有 shell 写盘。
+- 模型提交的语义证据目前仍只是结构检查。真实工具观测也不等于语义验证：`bash` 调用成功不代表退出码为 0，更不代表测试已经通过。
+- 视频/音乐/模型 SOP 不会替你安装推理或生成引擎；缺能力时必须报告，不能伪造成品。
+- 自动选流不授权发布、上传、删除、购买、签约或账号操作。现有用户授权和 Host 权限策略继续生效。
+- 状态面向单 Host 进程；不要让多个 DSH 进程同时写同一个状态文件。
 
-- reproduce/root-cause 阶段禁止 `write` / `edit`。
-- verify 阶段要求至少一次 `bash` 成功记录。
-- verify Gate 两次不过会返回 implement。
-- review 不通过也返回 implement。
+独立 Test/File/Reviewer validators、自动子代理模型分配和完整可视化编辑器**尚未实现**。
 
-## Gate 的信任边界
+## 验证与开发
 
-MVP 已经比纯 Prompt/Skill 强，但要明确边界：
-
-1. **插件能强验证**：Stage、重试次数、分支、工具 allow/deny、某工具是否真实被调用及结果成功/失败。
-2. **插件只能做结构验证**：模型提交的 `root_cause`、`review_summary` 等语义内容，目前能检查类型、长度、数量、精确值，但不能证明内容本身是真的。
-3. 后续版本会加入 **validator gate**：Shell/Test validator、文件 validator、schema validator、reviewer subagent validator，让更多 Gate 从“模型声明”升级成“外部验证”。
-
-这个边界是刻意保留的：第一轮实验先验证“预定义 Stage + 硬 Gate + 工具事实”是否已经明显减少探索和返工，再决定哪些 validator 最值得做。
-
-## A/B 实验
-
-我们建议同一个任务分别运行：
-
-**A：普通 DSH**
-
-```text
-直接给任务，让 Agent 自由规划和执行。
-```
-
-**B：DSH + Playbook**
-
-```text
-先 playbook.start("bug-fix")，再执行同一任务。
-```
-
-记录：
-
-- 是否一次完成
-- 总模型轮次
-- 工具调用数
-- 无效/重复工具调用数
-- 返工次数
-- 是否跳过关键步骤
-- 最终人工验收结果
-- 所用模型大小/能力
-
-真正要验证的不是“Playbook 会不会让最强模型更强”，而是：
-
-> **成熟流程能不能把较弱模型的稳定交付能力，拉近到更强模型。**
-
-## 开发
+在源码仓库运行，无模型调用：
 
 ```bash
 npm test
@@ -187,14 +107,10 @@ npm run check
 npm run packcheck
 ```
 
-## Roadmap
+装有实际 DSH peer dependencies 时可运行 `npm run sdkcheck`，验证真实 SDK 的导入、工具定义、返回值和消息构造。
+CI 在 Node 20/22/24 跑离线测试，并单独跑当前已发布 SDK 的契约冒烟。它不替代目标安装版本的真实 Web Profile、浏览器和模型端到端验收。
 
-- 0.1：Stage / Gate / retry / branch / hard tool policy / durable state / built-in bug-fix / 基础 Web 面板
-- 0.2：Shell/Test/File/Schema validator gates
-- 0.3：与 `dsh-subagent-mgr` 联动，Stage 可指定 worker / 模型档位
-- 0.4：可视化 Playbook 编辑器、完整执行时间线、Gate 证据面板
-- 0.5：Playbook 版本化、运行指标、A/B benchmark
-- 0.6：未知情况 Explore fallback → improvement proposal → 人工审核 → Playbook 新版本
+同任务做 A/B 时，固定初始代码/素材、模型和工具；A 新会话关闭自动接单且无活动流程，B 新会话默认开启。对比实际验收、轮次、调用、返工和人工介入，不要用不同初始仓库证明提升。
 
 ## License
 
