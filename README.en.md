@@ -4,8 +4,14 @@
 
 **Give a task. Select its SOP automatically. Execute through stages and gates.**
 
-Version 0.3.0 ships **19 starter workflows** for engineering, review, releases, recovery, deployment, content, music, research, analysis and SOP authoring. This extends DeepSeek Harness rather than replacing its Agent runtime.
+Version 0.4.0 ships **19 starter workflows** for engineering, review, releases, recovery, deployment, content, music, research, analysis and SOP authoring. This extends DeepSeek Harness rather than replacing its Agent runtime.
 
+
+## 0.4.0: real artifact checks and same-run revisions
+
+Adds canonical-script/segment/subtitle coverage, a first-segment pilot, decoded PCM/media checks, artifact hashes and stale-cover detection, awaiting_review, same-run revisions, bounded repair and event-generated reports. The full media contract applies to new narrated-video production runs; other SOPs gain generic control improvements.
+
+See [media and revision guide](docs/MEDIA-REVISION.en.md). Requires existing Python 3.9+, FFmpeg/ffprobe; no automatic installer, new model or Host-policy bypass. This is not ASR, visual semantic review or a measured MiniMax quality gain.
 
 ## 0.3.0 execution-quality fixes
 
@@ -49,6 +55,8 @@ Enter in DSH chat, not the shell:
 /playbook status
 /playbook status json
 /playbook report
+/playbook revise
+/playbook accept
 /playbook resume
 /playbook auto off
 /playbook auto on
@@ -67,7 +75,7 @@ User JSON definitions load from `${DSH_HOME:-~/.dsh}/playbooks`; override with `
 
 Top-level routing metadata supports `groups`, `keywords`, `exclude`, `priority`, `autoStart` and `examples`. Definitions without routing metadata remain explicitly selectable by the Agent or user.
 
-The `playbook` model tool provides `list/inspect/recommend/route/start/status/check/submit/block/report/reload`. Both `check` and `submit` require an explicit `stage_id`. Model-side `cancel` remains only as a compatibility entry that returns a clear error; cancellation and resume are human command/panel controls.
+The `playbook` model tool provides `list/inspect/recommend/route/start/status/check/submit/block/repair/report/export_report/reload`. Both `check` and `submit` require an explicit `stage_id`. Model-side `cancel` remains only as a compatibility entry that returns a clear error; cancellation and resume are human command/panel controls.
 
 ## Guarantees and limits
 
@@ -77,7 +85,7 @@ Tool-name policies use DSH guards, not an OS sandbox. Denying `write`/`edit` doe
 
 SOPs do not include video/music/model engines. Missing capabilities must be reported, not replaced with fabricated artifacts. Automatic selection grants no additional publication, upload, deletion, purchase, signing or account authority. Existing user authorization and Host policy remain in force. State storage targets a single Host process, not concurrent multi-process writers.
 
-Independent Test/File/Reviewer validators, automatic worker/model routing and a full visual editor are **not implemented**.
+Independent Test/Reviewer validators, automatic worker/model routing and a full visual editor are not implemented. The two narrated-video SOPs now have artifact validators; see the 0.4.0 guide.
 
 ## Verification
 
@@ -87,6 +95,7 @@ From a source checkout, without model calls:
 npm test
 npm run check
 npm run packcheck
+npm run mediatest
 ```
 
 With actual DSH peer dependencies installed, `npm run sdkcheck` verifies SDK imports, tool definitions, canonical output and message creation. CI runs offline tests on Node 20/22/24 and a separate current-published-SDK contract smoke. This is not a live deployment-version Web Profile/browser/model end-to-end test.

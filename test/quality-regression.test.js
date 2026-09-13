@@ -38,7 +38,7 @@ test('inherited properties cannot satisfy evidence requirements', () => {
 })
 test('unsupported validators are rejected instead of being silently ignored', () => {
   const p = verification(); p.stages[0].gate.validators = [{ kind: 'imaginary-check' }]
-  assert.throws(() => normalizePlaybook(p), /unsupported gate field/)
+  assert.throws(() => normalizePlaybook(p), /supported kind|unsupported gate field/)
 })
 test('receipt rules must reference declared string evidence', () => {
   const p = verification(); p.stages[0].gate.toolResults[0].callIdKey = 'missing'

@@ -2,11 +2,11 @@
 const COMMAND_GATES = new Set(['bug-fix/verify', 'feature-development/verify', 'plugin-development/verify', 'dsh-plugin-development/package-check', 'release/build'])
 export function strengthenPlaybook(input) {
   const playbook = structuredClone(input)
-  playbook.version = '0.3.0'
+  playbook.version = '0.4.0'
   for (const stage of playbook.stages) {
     stage.instructions ??= []
     stage.instructions.push('Complete the actual stage work before reporting evidence. Do not fabricate files, observations or execution results to fill the form. The user deliverable is not the SOP evidence form.')
-    stage.instructions.push('If a prerequisite is missing, use playbook action=block with what is missing and what would unblock it. For format errors use action=check and repair the fields; do not repeat successful work just to fill a form.')
+    stage.instructions.push('Do actual work, then submit only evidence. For a uniquely wrapped {item:[...]} array the plugin records a lossless correction. Other format mistakes: use check and repair the indicated field. Use action=repair for a bounded technical retry; missing inputs/permissions: action=block. Never leave a failed SOP to continue work informally.')
     if (!COMMAND_GATES.has(`${playbook.id}/${stage.id}`)) continue
     stage.gate.evidence.push(
       { key: 'verification_command', type: 'string', minLength: 1 },

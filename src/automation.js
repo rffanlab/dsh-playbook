@@ -1,3 +1,4 @@
+import { reviewFeedback } from './run-control.js'
 /** Public DSH pre-step adapter. SDK message construction is supplied by the Host entry. */
 export function installAutoRouting(ctx, engine, router, { ready = async () => {}, createMessage, onError = console.error } = {}) {
   if (typeof createMessage !== 'function') throw new Error('createMessage is required')
@@ -24,10 +25,19 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
     try {
       await ready()
       signal?.throwIfAborted()
-      // Clarification and additional requirements belong to the current run.
-      if (engine.attachedRun(id)) return downstream
       for (const message of fresh) seen.add(message.id ?? message)
       while (seen.size > 64) seen.delete(seen.values().next().value)
+      const existing = engine.status(id), feedback = reviewFeedback(raw)
+      if (existing.run && feedback === 'reject' && ['completed', 'awaiting_review', 'accepted', 'failed'].includes(existing.run.state)) {
+        const status = await engine.requestRevision(id, raw, { signal, messageId: String(fresh.at(-1).id) })
+        return { ...downstream, messages: [...downstream.messages, notice(`原交付被否决：已进入同一 run 的 revision ${status.run.revision}，不得新开审核流程丢失原任务。\n${status.instruction}`)] }
+      }
+      if (existing.run?.state === 'awaiting_review' && feedback === 'accept') {
+        await engine.accept(id, { signal, messageId: String(fresh.at(-1).id) })
+        return { ...downstream, messages: [...downstream.messages, notice('用户明确验收通过，已记录 accepted；不是模型自评。')] }
+      }
+      // Clarification and additional requirements belong to the current run.
+      if (engine.attachedRun(id)) return downstream
       const oversized = raw.length > 24000
       const task = oversized ? `${raw.slice(0, 6000)}\n[路由摘要截断；完整任务仍在原用户消息中]\n${raw.slice(-6000)}` : raw
       if (router.recommend(task).kind === 'conversation' && !router.view(id).pending) return downstream

@@ -1,10 +1,11 @@
+import { normalizeValidators } from './media-checks.js'
 import { normalizeRouting } from './routing.js'
 import { resultFailures } from './receipts.js'
 import { isDeepStrictEqual } from 'node:util'
 
 export const PLAYBOOK_SCHEMA_VERSION = 1
 export const STAGE_MODES = new Set(['strict', 'guided', 'free'])
-export const RUN_STATES = new Set(['active', 'blocked', 'completed', 'failed', 'cancelled'])
+export const RUN_STATES = new Set(['active', 'blocked', 'awaiting_review', 'accepted', 'completed', 'failed', 'cancelled'])
 
 const ID_RE = /^[a-z][a-z0-9_-]{0,63}$/
 
@@ -76,7 +77,8 @@ function normalizeObservedToolRule(rule, index, stageId) {
 function normalizeGate(gate, stageId) {
   if (gate === undefined) return { evidence: [], observedTools: [] }
   if (!gate || typeof gate !== 'object' || Array.isArray(gate)) fail(`stage ${stageId} gate must be an object`)
-  for (const key of Object.keys(gate)) if (!['evidence', 'require', 'observedTools', 'toolResults'].includes(key)) fail(`stage ${stageId}: unsupported gate field ${key}`)
+  for (const key of Object.keys(gate)) if (!['evidence', 'require', 'observedTools', 'toolResults', 'validators'].includes(key)) fail(`stage ${stageId}: unsupported gate field ${key}`)
+  const validators = normalizeValidators(gate.validators)
   const toolResults = gate.toolResults ?? []
   if (!Array.isArray(toolResults)) fail('gate.toolResults must be an array')
   for (const rule of toolResults) {
@@ -89,10 +91,12 @@ function normalizeGate(gate, stageId) {
   const observedTools = gate.observedTools ?? []
   if (!Array.isArray(evidence)) fail(`stage ${stageId} gate evidence must be an array`)
   if (!Array.isArray(observedTools)) fail(`stage ${stageId} gate observedTools must be an array`)
+  for (const rule of validators) if (!evidence.some(item => item?.key === rule.pathKey && item.type === 'string')) fail(`validator requires string evidence ${rule.pathKey}`)
   for (const rule of toolResults) for (const key of [rule.callIdKey, rule.commandKey]) {
     if (!evidence.some(item => item?.key === key && item.type === 'string')) fail(`toolResults requires string evidence rule for ${key}`)
   }
   return {
+    validators,
     toolResults: clone(toolResults),
     evidence: evidence.map((rule, index) => normalizeEvidenceRule(rule, index, stageId)),
     observedTools: observedTools.map((rule, index) => normalizeObservedToolRule(rule, index, stageId)),
@@ -171,7 +175,9 @@ export function normalizePlaybook(input) {
   }
   const initialStage = input.initialStage ?? stages[0].id
   if (!ids.has(initialStage)) fail(`initialStage references unknown stage: ${initialStage}`)
+  const delivery = normalizeDelivery(input.delivery, ids)
   return {
+    ...(delivery ? { delivery } : {}),
     schemaVersion: PLAYBOOK_SCHEMA_VERSION,
     id,
     version: String(rawVersion),
@@ -214,7 +220,7 @@ export function gateDiagnostics(stage, evidence = {}, observations = {}) {
   for (const rule of stage.gate.evidence) {
     const path = `evidence.${rule.key}`
     const value = Object.hasOwn(safe, rule.key) ? safe[rule.key] : undefined
-    if (!typeMatches(value, rule.type)) { issue('format', path, `${path} must be ${rule.type}`); continue }
+    if (!typeMatches(value, rule.type)) { issue('format', path, `${path} must be ${rule.type}; received ${Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value}. Expected shape: ${rule.type === 'array' ? '["actual observation"] (not {item:[...]})' : rule.type}`); continue }
     if (rule.type === 'string' && !value.trim()) issue('format', path, `${path} cannot be whitespace`)
     if (rule.minLength !== undefined && value.trim().length < rule.minLength) issue('format', path, `${path} length after trimming must be >= ${rule.minLength}`)
     if (rule.minItems !== undefined && value.length < rule.minItems) issue('format', path, `${path} items must be >= ${rule.minItems}`)
@@ -271,6 +277,7 @@ export function formatStageInstruction(stage, attempt = 1) {
   ]
   if (stage.instructions.length) lines.push('Instructions:', ...stage.instructions.map(item => `- ${item}`))
   if (stage.gate.evidence.length) lines.push('Required evidence:', ...stage.gate.evidence.map(rule => `- ${rule.key}: ${JSON.stringify(rule)}`))
+  if (stage.gate.validators?.length) lines.push('Independent Host checks run on submit: ' + stage.gate.validators.map(v => `${v.kind} from evidence.${v.pathKey}`).join(', '))
   if (stage.gate.toolResults?.length) lines.push('Required host command receipts (inspect status for call IDs):', ...stage.gate.toolResults.map(rule => `- ${rule.name}: evidence.${rule.callIdKey} + exact evidence.${rule.commandKey}; foreground exit 0 only`))
   if (stage.gate.observedTools.length) lines.push('Observed-tool requirements:', ...stage.gate.observedTools.map(rule => `- ${rule.name}: calls>=${rule.minCalls ?? 0}, successes>=${rule.minSuccesses ?? 0}, failures>=${rule.minFailures ?? 0}`))
   if (stage.mode === 'strict' && stage.tools.allow) lines.push(`Strict tool allowlist: ${stage.tools.allow.join(', ') || '(none)'}`)
@@ -278,4 +285,31 @@ export function formatStageInstruction(stage, attempt = 1) {
   lines.push('Do the actual work first. Evidence is a report of work, not a substitute for artifacts. Use action=check for a non-mutating preflight. Missing capabilities: action=block with a specific reason, never invent a pass.')
   lines.push('Do not claim this stage is complete in prose. Submit structured evidence through the playbook tool; only a passed gate advances the run.')
   return lines.join('\n')
+}
+
+/** Optional candidate/revision contract; old pinned workflows remain unchanged. */
+function normalizeDelivery(value, ids) {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('delivery must be an object')
+  for (const key of Object.keys(value)) if (!['review', 'revisionStage', 'repairStages', 'maxRevisions', 'maxSelfRepairs'].includes(key)) fail(`unsupported delivery field: ${key}`)
+  if (value.review !== true || !ids.has(value.revisionStage)) fail('delivery requires review=true and a valid revisionStage')
+  const repairStages = asStringArray(value.repairStages, 'delivery.repairStages') ?? []
+  if (!repairStages.length || repairStages.some(id => !ids.has(id))) fail('delivery repairStages must reference real stages')
+  const maxRevisions = value.maxRevisions ?? 2, maxSelfRepairs = value.maxSelfRepairs ?? 3
+  for (const v of [maxRevisions, maxSelfRepairs]) if (!Number.isSafeInteger(v) || v < 1 || v > 5) fail('delivery budgets must be integers 1..5')
+  return { review: true, revisionStage: value.revisionStage, repairStages, maxRevisions, maxSelfRepairs }
+}
+
+/** Only unwrap the exact, lossless {item: Array} mistake seen in the experiment. */
+export function repairEvidenceShape(stage, evidence) {
+  const fixed = structuredClone(evidence), corrections = []
+  for (const rule of stage.gate.evidence) {
+    const v = fixed[rule.key]
+    if (rule.type === 'array' && v && !Array.isArray(v) && typeof v === 'object' &&
+        Object.keys(v).length === 1 && Object.hasOwn(v, 'item') && Array.isArray(v.item)) {
+      fixed[rule.key] = v.item
+      corrections.push({ path: `evidence.${rule.key}`, from: '{item: array}', to: 'array', lossless: true })
+    }
+  }
+  return { evidence: fixed, corrections }
 }

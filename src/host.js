@@ -1,3 +1,6 @@
+import { createReportExporter, isReportWrite } from './report-export.js'
+import { createMediaRunner } from './host-media.js'
+import { reportMarkdown } from './run-control.js'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { BUILTIN_PLAYBOOKS } from './builtins.js'
@@ -35,7 +38,8 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     catch (error) { console.error(`[dsh-playbook] custom catalog rejected; retaining built-ins and pinned runs: ${error?.message ?? error}`) }
   })()
   const ready = async () => { await initialized; if (startupError) throw new Error(`playbook state unavailable: ${startupError.message}`) }
-  ctx.tools.register(define(playbookDefinition(engine, reloadCatalog, router, ready)))
+  const pendingWrites = new Map()
+  ctx.tools.register(define(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx), createReportExporter(ctx, engine, pendingWrites))))
   const basePolicy = [
     'Playbook execution policy:',
     '- For a NEW actionable task with automatic routing enabled, select a SOP before work: call playbook action=route. Ordinary explanations/chat need no SOP.',
@@ -44,19 +48,20 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     '- Keep an active run on user clarifications. Do not automatically replace, cancel or restart it; cancelled/failed runs are not successful completion.',
     '- Obey the current stage. Submit stage_id and complete evidence through action=submit; only the engine advances stages.',
     '- Correct failed gates within the budget. Do not cancel to bypass a gate, invent evidence, or turn missing capabilities into fabricated results.',
-    '- Evidence-format mistakes are not failed work. Use action=check first; repair missing fields without repeating existing successful work. Never fill fake data to satisfy a gate.',
-    '- Missing tools, files, permissions or credentials: action=block with concrete needs, then explain. Only the user can resume/cancel; never use cancel/start to reset budgets.',
+    '- Prefer actual work then one submit; check is an optional format-only preflight, not a mandatory extra form. The narrow {item:[...]} mistake is corrected transparently. Never pad evidence with fake observations.',
+    '- Technical/format failure: use action=repair with a specific earlier stage and concrete diagnosis within the preserved budget. Missing resources/permission: block and ask. Never cancel/start or work informally to evade a failed SOP.',
+    '- Media candidates are not user acceptance. User rejection reopens the same run. Only an explicit direct-user approval can set accepted. Report facts come from action=report, never a prewritten success story.',
     '- SOPs are starter templates, not guaranteed optimal methods. Tool success is not proof of test exit code zero or semantic correctness.',
     '- A SOP never expands permissions. External publication, account actions, destructive operations and approvals still follow the user request and Host policy.',
   ].join('\n')
   ctx.systemPrompt.section({ name: 'tool:playbook', order: 365, text: ({ agent } = {}) => {
     if (!agent?.id) return basePolicy
     const id = String(agent.id), status = engine.status(id)
-    if (status.attached) return `${basePolicy}\nACTIVE PLAYBOOK:\n${stageContext(status)}`
+    if (status.attached || status.run?.state === 'failed') return `${basePolicy}\nACTIVE PLAYBOOK:\n${stageContext(status)}`
     const enabled = router.view(id).enabled
     return `${basePolicy}\nAutomatic routing: ${enabled ? 'on' : 'off; do not start a SOP unless explicitly requested'}\n${enabled ? engine.listPlaybooks().map(p => `${p.id}: ${p.name}`).join('\n') : ''}`
   } })
-  ctx.tools.guard(exec => exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
+  ctx.tools.guard(exec => isReportWrite(exec, pendingWrites) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
   const callScopes = new Map()
   ctx.on('tools/pre-execute', (exec, next) => {
     const run = exec.agent?.id ? engine.activeRun(String(exec.agent.id)) : undefined
@@ -70,12 +75,12 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     void engine.observeTool(String(exec.agent.id), { ...scope, name: exec.name, callId: exec.callId, isError: result.isError, receipt: toolReceipt(exec, result) })
       .catch(error => console.error(`[dsh-playbook] observation failed: ${error?.message ?? error}`))
   })
-  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear() }, 'dsh-playbook transient routing and call scopes')
+  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear() }, 'dsh-playbook transient routing and call scopes')
   installAutoRouting(ctx, engine, router, { ready, createMessage: message })
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({
       name: 'playbook', description: 'SOP selection and current-session control',
-      input: { hint: '[list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|cancel|reload]' },
+      input: { hint: '[list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|accept|cancel|reload]' },
       handler: async invocation => {
         try {
           const [op = 'status', ...rest] = (invocation.rawInput?.trim() ?? '').split(/\s+/).filter(Boolean)
@@ -104,13 +109,15 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
             router.clear(id); return success(conciseStatus(status))
           }
           if (op === 'resume') return success(conciseStatus(await engine.resume(id, { signal: invocation.signal })))
-          if (op === 'report') return success(engine.report(id))
+          if (op === 'report') return success(rest[0] === 'markdown' ? reportMarkdown(engine.report(id)) : engine.report(id))
+          if (op === 'revise') return success(conciseStatus(await engine.requestRevision(id, rest.join(' ') || 'User requested revision of the last deliverable.', { signal: invocation.signal })))
+          if (op === 'accept') return success(conciseStatus(await engine.accept(id, { signal: invocation.signal })))
           if (op === 'cancel') { const status = await engine.cancel(id, rest.join(' ') || 'cancelled by user', { signal: invocation.signal }); router.clear(id); return success(conciseStatus(status)) }
           if (op === 'status' || op === 'show') {
             const status = engine.status(id)
             return success(rest[0] === 'json' ? { ...status, routing: router.view(id) } : conciseStatus(status))
           }
-          throw new Error('usage: /playbook [list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|cancel|reload]')
+          throw new Error('usage: /playbook [list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|accept|cancel|reload]')
         } catch (error) { return { kind: 'error', text: error?.message ?? String(error) } }
       },
     })

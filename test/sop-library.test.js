@@ -22,8 +22,8 @@ for(const raw of BUILTIN_PLAYBOOKS)test(`SOP contracts and reachable completion:
       const exec={name:rule.name,callId:'fixture-call',arguments:{command:'npm test'}}
       await e.observeTool('s',{name:rule.name,callId:exec.callId,isError:false,receipt:toolReceipt(exec,{isError:false,value:{kind:'foreground',exitCode:0,signal:null,timedOut:false,aborted:false}})})
     }
-    await e.submit('s',{stageId:s.id,evidence})}
-  assert.equal(e.status('s').run.state,'completed') // Synthetic fixtures validate contracts, not real task quality.
+    await e.submit('s',{stageId:s.id,evidence,runtimeChecks:s.gate.validators?.map(v=>({kind:v.kind,validatorVersion:'0.4.0',passed:true,status:'pass',failures:[],bindings:{fixture:{sha256:'a',bytes:1}},narration:{scriptSha256:'a',segmentSha256:'b'},video:{binding:{sha256:'v'}},cover:{sha256:'c'}}))})}
+  assert.equal(e.status('s').run.state,p.delivery?.review?'awaiting_review':'completed') // Synthetic fixtures validate contracts, not real task quality.
 })
 test('canonical tool outputs contain no undefined fields and required stage ids are enforced',async()=>{
   const e=new PlaybookEngine();for(const p of BUILTIN_PLAYBOOKS)e.register(p)

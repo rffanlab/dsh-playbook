@@ -43,3 +43,15 @@ jobs:
       - run: npm install --ignore-scripts --no-package-lock
       - run: npm ls @deepseek-ai/dsh-tools @deepseek-ai/dsh-llm
       - run: npm run sdkcheck
+
+  media-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install test-only decoders
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: python3 --version && ffmpeg -version && ffprobe -version
+      - run: npm run mediatest

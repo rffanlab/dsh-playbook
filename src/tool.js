@@ -1,3 +1,5 @@
+import { repairEvidenceShape, gateDiagnostics } from './core.js'
+import { reportMarkdown } from './run-control.js'
 /** SDK-neutral tool definition; the Host wraps this with DSH defineTool. */
 const object = { type: 'object', additionalProperties: true }
 const json = value => JSON.parse(JSON.stringify(value)) // Omit absent optional stage fields at the canonical JSON boundary.
@@ -13,10 +15,11 @@ function inputObject(value) {
 export function conciseStatus(status) {
   if (!status?.run) return 'No playbook run is attached to this session.'
   if (status.blocker) return `${status.run.playbookId} blocked: ${status.blocker.reason}\n用户处理后 /playbook resume；放弃任务用 /playbook cancel。`
+  if (status.run.state === 'awaiting_review') return `${status.run.playbookId}: candidate_ready / awaiting_review, revision ${status.run.revision}. Only explicit user acceptance can mark accepted.`
   if (!status.active) return `${status.run.playbookId} is ${status.run.state}.`
   return `${status.run.playbookId} → ${status.run.stageId} (attempt ${status.run.stageAttempt}).\n${status.instruction}`
 }
-export function playbookDefinition(engine, reloadCatalog, router, ready = async () => {}) {
+export function playbookDefinition(engine, reloadCatalog, router, ready = async () => {}, runChecks, exportReport) {
   async function handle(args, exec) {
     switch (args.action) {
       case 'list': return { ok: true, playbooks: engine.listPlaybooks() }
@@ -30,6 +33,7 @@ export function playbookDefinition(engine, reloadCatalog, router, ready = async 
       case 'reload': return { ok: true, playbooks: await reloadCatalog() }
       case 'start': {
         const id = sessionId(exec)
+        if (engine.status(id).run?.state === 'awaiting_review') throw new Error('Candidate awaits user review; use explicit user revision or acceptance, not a new model-started SOP')
         if (engine.status(id).run && !engine.attachedRun(id) && !router.session(id).pendingTask) throw new Error('A fresh user task or /playbook start is required before restarting a terminal run')
         if (!args.playbook_id) throw new Error('playbook_id is required for start')
         const status = await engine.start(sessionId(exec), args.playbook_id, inputObject(args.input), { signal: exec.signal })
@@ -40,7 +44,12 @@ export function playbookDefinition(engine, reloadCatalog, router, ready = async 
         const id = sessionId(exec), status = engine.status(id)
         return { ok: true, status, routing: router.view(id), message: conciseStatus(status) }
       }
-      case 'report': return { ok: true, report: engine.report(sessionId(exec)) }
+      case 'export_report': { if (!exportReport) throw new Error('Report export unavailable'); return exportReport(exec) }
+      case 'report': { const report = engine.report(sessionId(exec)); return { ok: true, report, ...(args.format === 'markdown' ? { markdown: reportMarkdown(report) } : {}) } }
+      case 'repair': {
+        const status = await engine.repair(sessionId(exec), args.stage_id, args.note, { signal: exec.signal })
+        return { ok: true, status, message: conciseStatus(status) }
+      }
       case 'check': {
         if (!args.stage_id) throw new Error('stage_id is required for check')
         return { ok: true, gate: await engine.check(sessionId(exec), { stageId: args.stage_id, evidence: inputObject(args.evidence), signal: exec.signal }) }
@@ -51,10 +60,18 @@ export function playbookDefinition(engine, reloadCatalog, router, ready = async 
       }
       case 'submit': {
         if (!args.stage_id) throw new Error('stage_id is required for submit; use status to inspect the current stage')
-        const status = await engine.submit(sessionId(exec), { stageId: args.stage_id, evidence: inputObject(args.evidence), note: args.note ?? '', signal: exec.signal })
-        const { input, evidence, ...progress } = status
-        return { ok: true, status: progress, gate: status.lastGate, gatePassed: status.lastGate?.passed === true,
-          nextAction: status.blocker ? 'report_blocker' : status.lastGate?.repairOnly ? 'repair_evidence' : status.active ? 'execute_current_stage' : 'report_outcome',
+        const id = sessionId(exec)
+        await engine.queue
+        const before = engine.status(id), stage = engine.currentStage(id)
+        if (!before.active || !stage || stage.id !== args.stage_id) throw new Error('submit requires the active current stage; inspect status or use controlled repair')
+        const shaped = repairEvidenceShape(stage, inputObject(args.evidence))
+        const formats = gateDiagnostics(stage, shaped.evidence, before.observations).issues.filter(item => item.kind === 'format')
+        const expected = { runId: before.run.id, epoch: before.run.stageEpoch, revision: before.run.revision }
+        const runtimeChecks = !formats.length && stage.gate.validators?.length ? await runChecks?.(stage.gate.validators, shaped.evidence, exec) : undefined
+        const status = await engine.submit(id, { stageId: args.stage_id, evidence: inputObject(args.evidence), note: args.note ?? '', signal: exec.signal, runtimeChecks, expected })
+        const { input, evidence, machineEvidence, previousCandidate, ...progress } = status
+        return { ok: true, status: progress, validation: runtimeChecks?.map(({bindings, segmentAudio, ...summary}) => summary), gate: status.lastGate, gatePassed: status.lastGate?.passed === true,
+          nextAction: status.blocker ? 'report_blocker' : status.lastGate?.repairOnly ? 'repair_evidence' : status.active ? 'execute_current_stage' : status.run.state === 'awaiting_review' ? 'deliver_candidate_await_review' : 'report_outcome',
           message: conciseStatus(status) } 
       }
       case 'cancel': throw new Error('Model cancellation is disabled to prevent bypassing gates. Report blockers via action=block; the user can /playbook cancel.')
@@ -63,14 +80,15 @@ export function playbookDefinition(engine, reloadCatalog, router, ready = async 
   }
   return {
     name: 'playbook',
-    description: 'Choose and execute a task SOP. For a new work request use route (automatic selection/start); recommend is read-only and inspect shows the complete SOP. Ambiguous tasks: select a suitable playbook_id with note explaining the fit, or ask only for missing task requirements. Never ask the user to memorize SOP names. Active runs are never replaced by route. Do actual work before submitting evidence. Use check for a read-only preflight and repair format errors, not fabricated values. Missing inputs/tools: block with a reason. A blocked or terminal run is not completion. report exposes an audit trace. cancel/resume are human commands, not model escape hatches.',
+    description: 'Choose and execute a task SOP. For a new work request use route (automatic selection/start); recommend is read-only and inspect shows the complete SOP. Ambiguous tasks: select a suitable playbook_id with note explaining the fit, or ask only for missing task requirements. Never ask the user to memorize SOP names. Active runs are never replaced by route. Do actual work before submitting evidence. Use check for a read-only preflight and repair format errors, not fabricated values. A failed SOP still governs work: use bounded repair with a target stage and diagnosis; never work outside it. The exact {item:[...]} array mistake is corrected and recorded losslessly. Video submit runs independent Host media checks; self-reported release_ready cannot replace them. Missing inputs/tools: block with a reason. A blocked or terminal run is not completion. report exposes an audit trace. cancel/resume are human commands, not model escape hatches.',
     parameters: {
-      action: { type: 'string', required: true, enum: ['list', 'inspect', 'recommend', 'route', 'start', 'status', 'check', 'submit', 'block', 'report', 'reload', 'cancel'] },
+      action: { type: 'string', required: true, enum: ['list', 'inspect', 'recommend', 'route', 'start', 'status', 'check', 'submit', 'block', 'repair', 'report', 'export_report', 'reload', 'cancel'] },
       task: { type: 'string', description: 'Concise user task for recommend/route; the current captured user request is used when available.' },
       playbook_id: { type: 'string', description: 'Required for start/inspect; optional semantic selection for route.' },
       stage_id: { type: 'string', description: 'Required for submit: expected current stage id.' },
       input: { ...object, description: 'Task inputs for manual start.' },
       evidence: { ...object, description: 'Actual structured evidence matching every current gate constraint.' },
+      format: { type: 'string', enum: ['json', 'markdown'], description: 'System report format; counts and timings come from engine events.' },
       note: { type: 'string', description: 'Explain a semantic SOP selection, submit observation or user-requested cancellation.' },
     },
     output: { schema: object, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }] },

@@ -4,8 +4,14 @@
 
 **给任务，自动选择 SOP，再按阶段和验收条件执行。**
 
-v0.3.0 内置 **19 条工作流程**，覆盖开发、审查、发布准备、故障恢复、服务/模型部署、视频、公众号、音乐、调研、数据分析和 SOP 编写。它是 DeepSeek Harness 插件，不是另一个聊天 Agent。
+v0.4.0 内置 **19 条工作流程**，覆盖开发、审查、发布准备、故障恢复、服务/模型部署、视频、公众号、音乐、调研、数据分析和 SOP 编写。它是 DeepSeek Harness 插件，不是另一个聊天 Agent。
 
+
+## 0.4.0：真实媒体检查与原任务返修
+
+新增完整稿/配音段/字幕覆盖检查、首段样片、真实 PCM 和媒体解码、文件哈希与旧封面失效、awaiting_review、同 run 修订、受控 repair 和事件生成报告。只对新启动的两条口播视频生产 SOP 开启全套媒体契约；其余 SOP 得到通用状态改进。
+
+完整说明与 Agent 制作清单格式：[媒体与返修](docs/MEDIA-REVISION.md)。需要现有 Python 3.9+、ffmpeg/ffprobe；不自动安装、不新增模型、不绕过 Host 工具权限。不是 ASR、视觉语义审核或 MiniMax 实测效果保证。
 
 ## 0.3.0 执行质量修复
 
@@ -70,6 +76,8 @@ dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 /playbook status
 /playbook status json
 /playbook report
+/playbook revise
+/playbook accept
 /playbook resume
 /playbook auto off
 /playbook auto on
@@ -89,7 +97,7 @@ Web 设置 → 插件 → **Playbook** 原有面板继续用于查看目录、�
 
 路由支持 `routing.groups`、`keywords`、`exclude`、`priority`、`autoStart` 和 `examples`；详见自动接单说明。没有路由规则的自定义 SOP 仍可由 Agent 或用户显式选择。
 
-模型工具提供 `list/inspect/recommend/route/start/status/check/submit/block/report/reload`。`check` 和 `submit` 要求明确提供 `stage_id`。模型侧 `cancel` 仅保留为返回明确错误的兼容入口；取消与恢复由用户命令或面板操作。
+模型工具提供 `list/inspect/recommend/route/start/status/check/submit/block/repair/report/export_report/reload`。`check` 和 `submit` 要求明确提供 `stage_id`。模型侧 `cancel` 仅保留为返回明确错误的兼容入口；取消与恢复由用户命令或面板操作。
 
 ## 执行保障与边界
 
@@ -102,7 +110,7 @@ Web 设置 → 插件 → **Playbook** 原有面板继续用于查看目录、�
 - 自动选流不授权发布、上传、删除、购买、签约或账号操作。现有用户授权和 Host 权限策略继续生效。
 - 状态面向单 Host 进程；不要让多个 DSH 进程同时写同一个状态文件。
 
-独立 Test/File/Reviewer validators、自动子代理模型分配和完整可视化编辑器**尚未实现**。
+独立 Test/Reviewer 与自动子代理模型分配、完整可视化编辑器仍未实现；媒体文件检查已在 0.4.0 两条视频 SOP 中落地，详见媒体说明。
 
 ## 验证与开发
 
@@ -112,6 +120,7 @@ Web 设置 → 插件 → **Playbook** 原有面板继续用于查看目录、�
 npm test
 npm run check
 npm run packcheck
+npm run mediatest
 ```
 
 装有实际 DSH peer dependencies 时可运行 `npm run sdkcheck`，验证真实 SDK 的导入、工具定义、返回值和消息构造。
