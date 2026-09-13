@@ -4,7 +4,12 @@
 
 **Give a task. Select its SOP automatically. Execute through stages and gates.**
 
-Version 0.2.0 ships **19 starter workflows** for engineering, review, releases, recovery, deployment, content, music, research, analysis and SOP authoring. This extends DeepSeek Harness rather than replacing its Agent runtime.
+Version 0.3.0 ships **19 starter workflows** for engineering, review, releases, recovery, deployment, content, music, research, analysis and SOP authoring. This extends DeepSeek Harness rather than replacing its Agent runtime.
+
+
+## 0.3.0 execution-quality fixes
+
+Adds Host command-receipt gates, read-only `check`, separate format repairs, durable blocking/human resume, stale-evidence invalidation and run reports. Automatic intake and all 19 SOPs remain. The model cannot reset gates through cancel/start; human controls remain available. See [execution receipts and format repair](docs/QUALITY.en.md). Existing runs retain old pinned definitions; test new gates in a fresh session.
 
 ## Start directly
 
@@ -43,6 +48,8 @@ Enter in DSH chat, not the shell:
 /playbook recommend Write a WeChat article
 /playbook status
 /playbook status json
+/playbook report
+/playbook resume
 /playbook auto off
 /playbook auto on
 /playbook start bug-fix
@@ -60,11 +67,11 @@ User JSON definitions load from `${DSH_HOME:-~/.dsh}/playbooks`; override with `
 
 Top-level routing metadata supports `groups`, `keywords`, `exclude`, `priority`, `autoStart` and `examples`. Definitions without routing metadata remain explicitly selectable by the Agent or user.
 
-The `playbook` model tool adds `recommend`, `inspect` and `route`, preserving `list/start/status/submit/reload/cancel`. Submission now requires an explicit `stage_id`.
+The `playbook` model tool provides `list/inspect/recommend/route/start/status/check/submit/block/report/reload`. Both `check` and `submit` require an explicit `stage_id`. Model-side `cancel` remains only as a compatibility entry that returns a clear error; cancellation and resume are human command/panel controls.
 
 ## Guarantees and limits
 
-Stage gates, retries/branches, snapshot pinning and durable run state remain. Automatic starts wait for state hydration. Stage context includes actual evidence type/length/count/equality requirements plus a bounded prior-evidence summary. A default 64-submission budget bounds gate loops; it is not a token or wall-clock limit.
+Stage gates, retries/branches, snapshot pinning and durable run state remain. Automatic starts wait for state hydration. Stage context includes actual evidence type/length/count/equality requirements plus a bounded prior-evidence summary. A default 64-submission execution-gate budget bounds loops, with a separate three-repair format budget before blocking; neither is a token or wall-clock limit.
 
 Tool-name policies use DSH guards, not an OS sandbox. Denying `write`/`edit` does not prevent all shell-based writes. Semantic evidence is structurally validated, not independently proven. Observed `bash` tool success is not a zero exit status or a passing-test guarantee.
 

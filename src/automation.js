@@ -25,7 +25,7 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
       await ready()
       signal?.throwIfAborted()
       // Clarification and additional requirements belong to the current run.
-      if (engine.activeRun(id)) return downstream
+      if (engine.attachedRun(id)) return downstream
       for (const message of fresh) seen.add(message.id ?? message)
       while (seen.size > 64) seen.delete(seen.values().next().value)
       const oversized = raw.length > 24000

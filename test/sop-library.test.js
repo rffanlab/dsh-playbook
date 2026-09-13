@@ -5,6 +5,7 @@ import { PlaybookEngine } from '../src/engine.js'
 import { normalizePlaybook, evaluateGate } from '../src/core.js'
 import { PlaybookRouter } from '../src/routing.js'
 import { playbookDefinition } from '../src/tool.js'
+import { toolReceipt } from '../src/receipts.js'
 function evidenceFor(stage) {
   return Object.fromEntries(stage.gate.evidence.map(r=>[r.key,Object.hasOwn(r,'equals')?r.equals:r.type==='array'?['fixture evidence']:r.type==='boolean'?true:r.type==='number'?1:r.type==='object'?{fixture:true}:'Fixture evidence for state-machine tests only.']))
 }
@@ -15,7 +16,13 @@ for(const raw of BUILTIN_PLAYBOOKS)test(`SOP contracts and reachable completion:
   for(const s of p.stages){assert.ok(s.instructions.length);assert.ok(s.gate.evidence.length>=2);assert.equal(evaluateGate(s,{}).passed,false)}
   let n=0
   while(e.activeRun('s')&&n++<20){const s=e.currentStage('s');for(const t of s.gate.observedTools){for(let i=0;i<Math.max(t.minCalls??0,t.minSuccesses??0);i++)await e.observeTool('s',{name:t.name,isError:false})}
-    await e.submit('s',{stageId:s.id,evidence:evidenceFor(s)})}
+    const evidence=evidenceFor(s)
+    for(const rule of s.gate.toolResults??[]){
+      evidence[rule.callIdKey]='fixture-call'; evidence[rule.commandKey]='npm test';
+      const exec={name:rule.name,callId:'fixture-call',arguments:{command:'npm test'}}
+      await e.observeTool('s',{name:rule.name,callId:exec.callId,isError:false,receipt:toolReceipt(exec,{isError:false,value:{kind:'foreground',exitCode:0,signal:null,timedOut:false,aborted:false}})})
+    }
+    await e.submit('s',{stageId:s.id,evidence})}
   assert.equal(e.status('s').run.state,'completed') // Synthetic fixtures validate contracts, not real task quality.
 })
 test('canonical tool outputs contain no undefined fields and required stage ids are enforced',async()=>{

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { evaluateGate, formatStageInstruction, normalizePlaybook, publicStage, stageById, toolPolicyDecision } from './core.js'
+import { gateDiagnostics, formatStageInstruction, normalizePlaybook, publicStage, stageById, toolPolicyDecision } from './core.js'
 
 function nowIso(clock) {
   return new Date(clock()).toISOString()
@@ -18,8 +18,10 @@ function runIdOf(sessionId, playbookId, clock) {
 }
 
 export class PlaybookEngine {
-  constructor({ clock = Date.now, persist = async () => {}, maxSubmissions = 64 } = {}) {
+  constructor({ clock = Date.now, persist = async () => {}, maxSubmissions = 64, maxFormatRepairs = 3 } = {}) {
     if (!Number.isSafeInteger(maxSubmissions) || maxSubmissions < 1) throw new Error('maxSubmissions must be positive')
+    if (!Number.isSafeInteger(maxFormatRepairs) || maxFormatRepairs < 1) throw new Error('maxFormatRepairs must be positive')
+    this.maxFormatRepairs = maxFormatRepairs
     this.maxSubmissions = maxSubmissions
     this.clock = clock
     this.persist = persist
@@ -87,13 +89,18 @@ export class PlaybookEngine {
     return run?.state === 'active' ? run : undefined
   }
 
+  attachedRun(sessionId) {
+    const run = this.runs.get(String(sessionId))
+    return ['active', 'blocked'].includes(run?.state) ? run : undefined
+  }
+
   playbookForRun(run) {
     if (run?.playbookSnapshot) return run.playbookSnapshot
     return run ? this.getPlaybook(run.playbookId) : undefined
   }
 
   currentStage(sessionId) {
-    const run = this.activeRun(sessionId)
+    const run = this.attachedRun(sessionId)
     if (!run) return undefined
     const playbook = this.playbookForRun(run)
     return playbook ? stageById(playbook, run.stageId) : undefined
@@ -103,7 +110,7 @@ export class PlaybookEngine {
     return this.serialize(async () => {
       signal?.throwIfAborted()
       const key = String(sessionId)
-      if (this.activeRun(key)) throw new Error(`session ${key} already has an active playbook`)
+      if (this.attachedRun(key)) throw new Error(`session ${key} already has an active playbook`)
       const playbook = this.getPlaybook(playbookId)
       if (!playbook) throw new Error(`unknown playbook: ${playbookId}`)
       if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) throw new Error('playbook input must be an object')
@@ -118,6 +125,7 @@ export class PlaybookEngine {
         stageId: playbook.initialStage,
         stageAttempt: 1,
         stageEpoch: 1,
+        formatRepairs: 0,
         input: clone(input ?? {}),
         evidence: {},
         observations: emptyObservations(),
@@ -140,6 +148,8 @@ export class PlaybookEngine {
     const stage = playbook ? stageById(playbook, run.stageId) : undefined
     return {
       active: run.state === 'active',
+      attached: ['active', 'blocked'].includes(run.state),
+      blocker: clone(run.blocker ?? null),
       run: {
         id: run.id,
         sessionId: run.sessionId,
@@ -149,6 +159,7 @@ export class PlaybookEngine {
         stageId: run.stageId,
         stageAttempt: run.stageAttempt,
         stageEpoch: run.stageEpoch ?? 0,
+        formatRepairs: run.formatRepairs ?? 0,
         startedAt: run.startedAt,
         updatedAt: run.updatedAt,
         finishedAt: run.finishedAt,
@@ -169,13 +180,21 @@ export class PlaybookEngine {
       if (!run) return false
       if (!event || typeof event.name !== 'string' || event.name === 'playbook') return false
       if (event.runId !== undefined && (event.runId !== run.id || event.stageId !== run.stageId || event.attempt !== run.stageAttempt || (event.epoch !== undefined && event.epoch !== (run.stageEpoch ?? 0)))) return false
-      const row = run.observations[event.name] ?? { calls: 0, successes: 0, failures: 0, lastAt: null, lastCallId: null }
+      const row = (Object.hasOwn(run.observations, event.name) ? run.observations[event.name] : undefined) ?? { calls: 0, successes: 0, failures: 0, lastAt: null, lastCallId: null }
+      // The same callback/receipt must not inflate success counts.
+      const callId = event.callId === undefined ? null : String(event.callId)
+      const seen = row.seenCallIds ?? []
+      if (callId && seen.includes(callId)) return false
+      if (callId) row.seenCallIds = [...seen, callId].slice(-128)
+      if (event.receipt && event.receipt.callId === callId && event.receipt.tool === event.name) {
+        row.receipts = [...(row.receipts ?? []), clone(event.receipt)].slice(-16)
+      }
       row.calls += 1
       if (event.isError) row.failures += 1
       else row.successes += 1
       row.lastAt = event.at ?? nowIso(this.clock)
       row.lastCallId = event.callId === undefined ? null : String(event.callId)
-      run.observations[event.name] = row
+      Object.defineProperty(run.observations, event.name, { value: row, writable: true, enumerable: true, configurable: true })
       run.updatedAt = row.lastAt
       await this.save()
       return true
@@ -205,12 +224,28 @@ export class PlaybookEngine {
         await this.save()
         return this.status(key)
       }
-      const gate = evaluateGate(stage, evidence, run.observations)
-      run.lastGate = { stageId: stage.id, attempt: run.stageAttempt, passed: gate.passed, failures: gate.failures, at }
-      run.evidence[stage.id] = clone(evidence)
+      if (JSON.stringify(evidence).length > 32768) throw new Error('evidence exceeds 32768 characters; submit artifact references and concise findings')
+      const gate = gateDiagnostics(stage, evidence, run.observations)
+      run.lastGate = { stageId: stage.id, attempt: run.stageAttempt, passed: gate.passed, failures: gate.failures, issues: gate.issues, at }
+      const formatOnly = gate.issues.length > 0 && gate.issues.every(issue => issue.kind === 'format')
+      if (formatOnly) {
+        run.formatRepairs = (run.formatRepairs ?? 0) + 1
+        run.updatedAt = at
+        run.lastGate.repairOnly = true
+        run.history.push({ type: 'format_repair', at, stageId: stage.id, failures: clone(gate.failures) })
+        if (run.formatRepairs >= this.maxFormatRepairs) {
+          run.state = 'blocked'
+          run.blocker = { reason: 'Repeated invalid evidence format; inspect the failed fields before resuming.', at }
+          run.history.push({ type: 'run_blocked', at, stageId: stage.id, reason: run.blocker.reason })
+        }
+        await this.save()
+        return this.status(key)
+      }
+      if (gate.passed) run.evidence[stage.id] = clone(evidence)
       run.history.push({ type: gate.passed ? 'gate_passed' : 'gate_failed', at, stageId: stage.id, attempt: run.stageAttempt, failures: clone(gate.failures), note: String(note ?? '') })
 
       if (gate.passed) {
+        run.formatRepairs = 0
         if (stage.next === null) {
           run.state = 'completed'
           run.finishedAt = at
@@ -226,6 +261,7 @@ export class PlaybookEngine {
         }
       } else if (run.stageAttempt < stage.retry.maxAttempts) {
         run.stageAttempt += 1
+        run.formatRepairs = 0
         run.stageEpoch = (run.stageEpoch ?? 0) + 1
         run.observations = emptyObservations()
         run.updatedAt = at
@@ -242,6 +278,16 @@ export class PlaybookEngine {
           reason = 'explore'
         }
         if (target) {
+          // Reworking an earlier phase invalidates its accepted downstream facts.
+          const invalidated = new Set()
+          let cursor = target
+          while (cursor && !invalidated.has(cursor)) {
+            invalidated.add(cursor)
+            cursor = stageById(playbook, cursor)?.next
+          }
+          for (const id of invalidated) delete run.evidence[id]
+          run.history.push({ type: 'evidence_invalidated', at, stages: [...invalidated] })
+          run.formatRepairs = 0
           run.stageId = target
           run.stageAttempt = 1
           run.stageEpoch = (run.stageEpoch ?? 0) + 1
@@ -260,13 +306,65 @@ export class PlaybookEngine {
     })
   }
 
-  async cancel(sessionId, reason = 'cancelled by caller') {
+  async check(sessionId, { stageId, evidence = {}, signal } = {}) {
     return this.serialize(async () => {
+      signal?.throwIfAborted()
+      const run = this.attachedRun(sessionId)
+      if (!run) throw new Error('no attached playbook')
+      const stage = this.currentStage(sessionId)
+      if (stageId !== stage.id) throw new Error(`stage mismatch: current=${stage.id}, submitted=${stageId}`)
+      return { ...gateDiagnostics(stage, evidence, run.observations), stageId, dryRun: true }
+    })
+  }
+
+  async block(sessionId, reason, { signal } = {}) {
+    if (typeof reason !== 'string' || reason.trim().length < 8) throw new Error('block requires a concrete reason (at least 8 characters)')
+    return this.serialize(async () => {
+      signal?.throwIfAborted()
+      const run = this.attachedRun(sessionId)
+      if (!run) throw new Error('no attached playbook')
+      const at = nowIso(this.clock)
+      run.state = 'blocked'
+      run.blocker = { reason: reason.trim().slice(0, 2000), at }
+      run.updatedAt = at
+      run.history.push({ type: 'run_blocked', at, stageId: run.stageId, reason: run.blocker.reason })
+      await this.save()
+      return this.status(sessionId)
+    })
+  }
+
+  /** Only the human command surface exposes resume; never the model tool. */
+  async resume(sessionId, { signal } = {}) {
+    return this.serialize(async () => {
+      signal?.throwIfAborted()
+      const run = this.attachedRun(sessionId)
+      if (run?.state !== 'blocked') throw new Error('run is not blocked')
+      run.state = 'active'
+      run.blocker = null
+      run.formatRepairs = 0
+      run.updatedAt = nowIso(this.clock)
+      run.history.push({ type: 'run_resumed', at: run.updatedAt, stageId: run.stageId })
+      await this.save()
+      return this.status(sessionId)
+    })
+  }
+
+  report(sessionId) {
+    const status = this.status(sessionId), run = this.runs.get(String(sessionId))
+    const count = type => (run?.history ?? []).filter(row => row.type === type).length
+    return { ...status, reportVersion: 1, summary: { gatesPassed: count('gate_passed'), gatesFailed: count('gate_failed'), formatRepairs: count('format_repair'), invalidations: count('evidence_invalidated'), blocks: count('run_blocked') }, history: clone(run?.history ?? []),
+      warning: 'Gate compliance is not independent semantic validation or an end-to-end task-quality score.' }
+  }
+
+  async cancel(sessionId, reason = 'cancelled by caller', { signal } = {}) {
+    return this.serialize(async () => {
+      signal?.throwIfAborted()
       const key = String(sessionId)
-      const run = this.activeRun(key)
+      const run = this.attachedRun(key)
       if (!run) throw new Error(`session ${key} has no active playbook`)
       const at = nowIso(this.clock)
       run.state = 'cancelled'
+      run.blocker = null
       run.finishedAt = at
       run.updatedAt = at
       run.history.push({ type: 'run_cancelled', at, stageId: run.stageId, reason: String(reason) })
@@ -276,6 +374,7 @@ export class PlaybookEngine {
   }
 
   policyDecision(sessionId, toolName, controllerToolName = 'playbook') {
+    if (this.attachedRun(sessionId)?.state === 'blocked' && ![controllerToolName, 'run_code', 'ask_user_question', 'AskUserQuestion'].includes(toolName)) return 'Playbook is blocked. Report the blocker; user can /playbook resume or /playbook cancel.'
     const stage = this.currentStage(String(sessionId))
     return toolPolicyDecision(stage, toolName, controllerToolName)
   }

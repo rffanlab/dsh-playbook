@@ -4,7 +4,12 @@
 
 **给任务，自动选择 SOP，再按阶段和验收条件执行。**
 
-v0.2.0 内置 **19 条工作流程**，覆盖开发、审查、发布准备、故障恢复、服务/模型部署、视频、公众号、音乐、调研、数据分析和 SOP 编写。它是 DeepSeek Harness 插件，不是另一个聊天 Agent。
+v0.3.0 内置 **19 条工作流程**，覆盖开发、审查、发布准备、故障恢复、服务/模型部署、视频、公众号、音乐、调研、数据分析和 SOP 编写。它是 DeepSeek Harness 插件，不是另一个聊天 Agent。
+
+
+## 0.3.0 执行质量修复
+
+新增真实命令回执 Gate、无副作用 `check`、格式修正与执行重试分离、持久化阻塞/人工恢复、旧证据失效和运行报告。自动接单与 19 条 SOP 保留。模型不能用 cancel/start 绕开 Gate；用户仍可取消/恢复。详见 [执行证据与格式修复](docs/QUALITY.md)。已有 run 保留旧 SOP 快照，新规则请开新会话测试。
 
 ## 直接开始
 
@@ -64,6 +69,8 @@ dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 /playbook recommend 帮我写公众号文章
 /playbook status
 /playbook status json
+/playbook report
+/playbook resume
 /playbook auto off
 /playbook auto on
 /playbook start bug-fix
@@ -82,13 +89,13 @@ Web 设置 → 插件 → **Playbook** 原有面板继续用于查看目录、�
 
 路由支持 `routing.groups`、`keywords`、`exclude`、`priority`、`autoStart` 和 `examples`；详见自动接单说明。没有路由规则的自定义 SOP 仍可由 Agent 或用户显式选择。
 
-模型工具新增 `recommend`、`inspect`、`route`，保留 `list/start/status/submit/reload/cancel`。`submit` 现在要求明确提供 `stage_id`。
+模型工具提供 `list/inspect/recommend/route/start/status/check/submit/block/report/reload`。`check` 和 `submit` 要求明确提供 `stage_id`。模型侧 `cancel` 仅保留为返回明确错误的兼容入口；取消与恢复由用户命令或面板操作。
 
 ## 执行保障与边界
 
 - 保留 Stage/Gate、重试分支、固定版本快照和持久运行状态；加载状态完成后才接受自动启动。
 - 当前阶段提示包含完整 evidence 类型、长度、条数和固定值要求，并带有有界的上游证据摘要。
-- 默认每次运行最多 64 次 Gate 提交，避免回退循环无限持续；不是总 token/时间预算。
+- 默认每次运行最多 64 次执行 Gate 提交；纯格式修正单独最多 3 次后阻塞。两者都不是总 token/时间预算。
 - 保留 `strict/guided/free` 模式。工具名约束由 DSH guard 执行，**不是 OS 沙箱**；禁止 `write/edit` 不等于禁止所有 shell 写盘。
 - 模型提交的语义证据目前仍只是结构检查。真实工具观测也不等于语义验证：`bash` 调用成功不代表退出码为 0，更不代表测试已经通过。
 - 视频/音乐/模型 SOP 不会替你安装推理或生成引擎；缺能力时必须报告，不能伪造成品。

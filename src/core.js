@@ -1,8 +1,10 @@
 import { normalizeRouting } from './routing.js'
+import { resultFailures } from './receipts.js'
+import { isDeepStrictEqual } from 'node:util'
 
 export const PLAYBOOK_SCHEMA_VERSION = 1
 export const STAGE_MODES = new Set(['strict', 'guided', 'free'])
-export const RUN_STATES = new Set(['active', 'completed', 'failed', 'cancelled'])
+export const RUN_STATES = new Set(['active', 'blocked', 'completed', 'failed', 'cancelled'])
 
 const ID_RE = /^[a-z][a-z0-9_-]{0,63}$/
 
@@ -33,6 +35,7 @@ function normalizeEvidenceRule(rule, index, stageId) {
   if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
     fail(`stage ${stageId} gate evidence[${index}] must be a string or object`)
   }
+  for (const key of Object.keys(rule)) if (!['key', 'type', 'minLength', 'minItems', 'equals'].includes(key)) fail(`unsupported evidence rule field: ${key}`)
   const type = rule.type ?? 'any'
   if (!['any', 'string', 'number', 'boolean', 'array', 'object'].includes(type)) {
     fail(`stage ${stageId} gate evidence[${index}] has unsupported type ${String(type)}`)
@@ -50,6 +53,8 @@ function normalizeEvidenceRule(rule, index, stageId) {
     out.minItems = rule.minItems
   }
   if (Object.hasOwn(rule, 'equals')) out.equals = clone(rule.equals)
+  if (out.minLength !== undefined && type !== 'string') fail('minLength requires type string')
+  if (out.minItems !== undefined && type !== 'array') fail('minItems requires type array')
   return out
 }
 
@@ -71,11 +76,24 @@ function normalizeObservedToolRule(rule, index, stageId) {
 function normalizeGate(gate, stageId) {
   if (gate === undefined) return { evidence: [], observedTools: [] }
   if (!gate || typeof gate !== 'object' || Array.isArray(gate)) fail(`stage ${stageId} gate must be an object`)
+  for (const key of Object.keys(gate)) if (!['evidence', 'require', 'observedTools', 'toolResults'].includes(key)) fail(`stage ${stageId}: unsupported gate field ${key}`)
+  const toolResults = gate.toolResults ?? []
+  if (!Array.isArray(toolResults)) fail('gate.toolResults must be an array')
+  for (const rule of toolResults) {
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) fail('toolResults rule must be an object')
+    for (const key of Object.keys(rule)) if (!['name', 'callIdKey', 'commandKey', 'command'].includes(key)) fail(`unsupported toolResults field ${key}`)
+    if (rule.command !== undefined) asNonEmptyString(rule.command, 'toolResults.command')
+    for (const key of ['name', 'callIdKey', 'commandKey']) asNonEmptyString(rule[key], `toolResults.${key}`)
+  }
   const evidence = gate.evidence ?? gate.require ?? []
   const observedTools = gate.observedTools ?? []
   if (!Array.isArray(evidence)) fail(`stage ${stageId} gate evidence must be an array`)
   if (!Array.isArray(observedTools)) fail(`stage ${stageId} gate observedTools must be an array`)
+  for (const rule of toolResults) for (const key of [rule.callIdKey, rule.commandKey]) {
+    if (!evidence.some(item => item?.key === key && item.type === 'string')) fail(`toolResults requires string evidence rule for ${key}`)
+  }
   return {
+    toolResults: clone(toolResults),
     evidence: evidence.map((rule, index) => normalizeEvidenceRule(rule, index, stageId)),
     observedTools: observedTools.map((rule, index) => normalizeObservedToolRule(rule, index, stageId)),
   }
@@ -170,49 +188,60 @@ export function stageById(playbook, stageId) {
   return playbook.stages.find(stage => stage.id === stageId)
 }
 
-function evidenceTypeMatches(value, type) {
-  if (type === 'any') return value !== undefined && value !== null
+/** Empty placeholders are not evidence. false/zero remain meaningful values. */
+function meaningful(value, depth = 0) {
+  if (depth > 16 || value === undefined || value === null) return false
+  if (typeof value === 'string') return value.trim().length > 0
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (typeof value === 'boolean') return true
+  if (Array.isArray(value)) return value.length > 0 && value.every(item => meaningful(item, depth + 1))
+  if (typeof value === 'object') return Object.values(value).some(item => meaningful(item, depth + 1))
+  return false
+}
+function typeMatches(value, type) {
+  if (type === 'any') return meaningful(value)
   if (type === 'array') return Array.isArray(value)
-  if (type === 'object') return typeof value === 'object' && value !== null && !Array.isArray(value)
+  if (type === 'object') return value !== null && typeof value === 'object' && !Array.isArray(value)
+  if (type === 'number') return Number.isFinite(value)
   return typeof value === type
 }
 
-function sameJson(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
-export function evaluateGate(stage, evidence = {}, observations = {}) {
-  const failures = []
-  const safeEvidence = evidence && typeof evidence === 'object' && !Array.isArray(evidence) ? evidence : {}
+/** Separate format repair from failed work/verification, without mutating a run. */
+export function gateDiagnostics(stage, evidence = {}, observations = {}) {
+  const issues = []
+  const safe = evidence && typeof evidence === 'object' && !Array.isArray(evidence) ? evidence : {}
+  const issue = (kind, path, message) => issues.push({ kind, path, message })
   for (const rule of stage.gate.evidence) {
-    const value = safeEvidence[rule.key]
-    if (!evidenceTypeMatches(value, rule.type)) {
-      failures.push(`evidence.${rule.key} must be ${rule.type === 'any' ? 'present' : rule.type}`)
-      continue
-    }
-    if (rule.minLength !== undefined && (typeof value !== 'string' || value.length < rule.minLength)) {
-      failures.push(`evidence.${rule.key} length must be >= ${rule.minLength}`)
-    }
-    if (rule.minItems !== undefined && (!Array.isArray(value) || value.length < rule.minItems)) {
-      failures.push(`evidence.${rule.key} items must be >= ${rule.minItems}`)
-    }
-    if (Object.hasOwn(rule, 'equals') && !sameJson(value, rule.equals)) {
-      failures.push(`evidence.${rule.key} must equal ${JSON.stringify(rule.equals)}`)
-    }
+    const path = `evidence.${rule.key}`
+    const value = Object.hasOwn(safe, rule.key) ? safe[rule.key] : undefined
+    if (!typeMatches(value, rule.type)) { issue('format', path, `${path} must be ${rule.type}`); continue }
+    if (rule.type === 'string' && !value.trim()) issue('format', path, `${path} cannot be whitespace`)
+    if (rule.minLength !== undefined && value.trim().length < rule.minLength) issue('format', path, `${path} length after trimming must be >= ${rule.minLength}`)
+    if (rule.minItems !== undefined && value.length < rule.minItems) issue('format', path, `${path} items must be >= ${rule.minItems}`)
+    if (Array.isArray(value) && value.some(item => !meaningful(item))) issue('format', path, `${path} contains empty placeholders (null, blank text or empty records)`)
+    if (rule.type === 'object' && !meaningful(value)) issue('format', path, `${path} cannot be an empty record`)
+    if (Object.hasOwn(rule, 'equals') && !isDeepStrictEqual(value, rule.equals)) issue('criterion', path, `${path} must equal ${JSON.stringify(rule.equals)}`)
   }
   for (const rule of stage.gate.observedTools) {
     const row = observations[rule.name] ?? { calls: 0, successes: 0, failures: 0 }
-    if (rule.minCalls !== undefined && row.calls < rule.minCalls) failures.push(`tool ${rule.name} calls ${row.calls}/${rule.minCalls}`)
-    if (rule.minSuccesses !== undefined && row.successes < rule.minSuccesses) failures.push(`tool ${rule.name} successes ${row.successes}/${rule.minSuccesses}`)
-    if (rule.minFailures !== undefined && row.failures < rule.minFailures) failures.push(`tool ${rule.name} failures ${row.failures}/${rule.minFailures}`)
+    for (const [minimum, count] of [['minCalls', 'calls'], ['minSuccesses', 'successes'], ['minFailures', 'failures']]) {
+      if (rule[minimum] !== undefined && (row[count] ?? 0) < rule[minimum]) issue('observation', rule.name, `tool ${rule.name} ${count} ${row[count] ?? 0}/${rule[minimum]}`)
+    }
   }
-  return { passed: failures.length === 0, failures }
+  for (const failure of resultFailures(stage.gate.toolResults, safe, observations)) issue('verification', 'toolResults', failure)
+  return { passed: issues.length === 0, failures: issues.map(item => item.message), issues }
+}
+
+export function evaluateGate(stage, evidence = {}, observations = {}) {
+  const { passed, failures } = gateDiagnostics(stage, evidence, observations)
+  return { passed, failures }
 }
 
 export function toolPolicyDecision(stage, toolName, controllerToolName = 'playbook') {
   if (!stage || toolName === controllerToolName) return undefined
   const deny = stage.tools?.deny ?? []
   if (deny.includes(toolName)) return `Playbook stage "${stage.id}" denies tool "${toolName}".`
+  if (toolName === 'run_code') return undefined // PTC transport; nested tools still pass this guard.
   if (stage.mode === 'strict' && Array.isArray(stage.tools?.allow) && !stage.tools.allow.includes(toolName)) {
     return `Playbook stage "${stage.id}" is strict; tool "${toolName}" is outside its allowlist.`
   }
@@ -242,9 +271,11 @@ export function formatStageInstruction(stage, attempt = 1) {
   ]
   if (stage.instructions.length) lines.push('Instructions:', ...stage.instructions.map(item => `- ${item}`))
   if (stage.gate.evidence.length) lines.push('Required evidence:', ...stage.gate.evidence.map(rule => `- ${rule.key}: ${JSON.stringify(rule)}`))
+  if (stage.gate.toolResults?.length) lines.push('Required host command receipts (inspect status for call IDs):', ...stage.gate.toolResults.map(rule => `- ${rule.name}: evidence.${rule.callIdKey} + exact evidence.${rule.commandKey}; foreground exit 0 only`))
   if (stage.gate.observedTools.length) lines.push('Observed-tool requirements:', ...stage.gate.observedTools.map(rule => `- ${rule.name}: calls>=${rule.minCalls ?? 0}, successes>=${rule.minSuccesses ?? 0}, failures>=${rule.minFailures ?? 0}`))
   if (stage.mode === 'strict' && stage.tools.allow) lines.push(`Strict tool allowlist: ${stage.tools.allow.join(', ') || '(none)'}`)
   if (stage.tools.deny?.length) lines.push(`Denied tools: ${stage.tools.deny.join(', ')}`)
+  lines.push('Do the actual work first. Evidence is a report of work, not a substitute for artifacts. Use action=check for a non-mutating preflight. Missing capabilities: action=block with a specific reason, never invent a pass.')
   lines.push('Do not claim this stage is complete in prose. Submit structured evidence through the playbook tool; only a passed gate advances the run.')
   return lines.join('\n')
 }

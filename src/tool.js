@@ -12,6 +12,7 @@ function inputObject(value) {
 }
 export function conciseStatus(status) {
   if (!status?.run) return 'No playbook run is attached to this session.'
+  if (status.blocker) return `${status.run.playbookId} blocked: ${status.blocker.reason}\n用户处理后 /playbook resume；放弃任务用 /playbook cancel。`
   if (!status.active) return `${status.run.playbookId} is ${status.run.state}.`
   return `${status.run.playbookId} → ${status.run.stageId} (attempt ${status.run.stageAttempt}).\n${status.instruction}`
 }
@@ -28,6 +29,8 @@ export function playbookDefinition(engine, reloadCatalog, router, ready = async 
       case 'route': return router.route(sessionId(exec), { task: args.task, playbookId: args.playbook_id, note: args.note ?? '', signal: exec.signal })
       case 'reload': return { ok: true, playbooks: await reloadCatalog() }
       case 'start': {
+        const id = sessionId(exec)
+        if (engine.status(id).run && !engine.attachedRun(id) && !router.session(id).pendingTask) throw new Error('A fresh user task or /playbook start is required before restarting a terminal run')
         if (!args.playbook_id) throw new Error('playbook_id is required for start')
         const status = await engine.start(sessionId(exec), args.playbook_id, inputObject(args.input), { signal: exec.signal })
         router.clear(sessionId(exec))
@@ -37,24 +40,32 @@ export function playbookDefinition(engine, reloadCatalog, router, ready = async 
         const id = sessionId(exec), status = engine.status(id)
         return { ok: true, status, routing: router.view(id), message: conciseStatus(status) }
       }
+      case 'report': return { ok: true, report: engine.report(sessionId(exec)) }
+      case 'check': {
+        if (!args.stage_id) throw new Error('stage_id is required for check')
+        return { ok: true, gate: await engine.check(sessionId(exec), { stageId: args.stage_id, evidence: inputObject(args.evidence), signal: exec.signal }) }
+      }
+      case 'block': {
+        const status = await engine.block(sessionId(exec), args.note, { signal: exec.signal })
+        return { ok: true, status, message: conciseStatus(status) }
+      }
       case 'submit': {
         if (!args.stage_id) throw new Error('stage_id is required for submit; use status to inspect the current stage')
         const status = await engine.submit(sessionId(exec), { stageId: args.stage_id, evidence: inputObject(args.evidence), note: args.note ?? '', signal: exec.signal })
-        return { ok: true, status, gate: status.lastGate, message: conciseStatus(status) }
+        const { input, evidence, ...progress } = status
+        return { ok: true, status: progress, gate: status.lastGate, gatePassed: status.lastGate?.passed === true,
+          nextAction: status.blocker ? 'report_blocker' : status.lastGate?.repairOnly ? 'repair_evidence' : status.active ? 'execute_current_stage' : 'report_outcome',
+          message: conciseStatus(status) } 
       }
-      case 'cancel': {
-        const id = sessionId(exec), status = await engine.cancel(id, args.note ?? 'cancelled by model/user')
-        router.clear(id)
-        return { ok: true, status, message: conciseStatus(status) }
-      }
+      case 'cancel': throw new Error('Model cancellation is disabled to prevent bypassing gates. Report blockers via action=block; the user can /playbook cancel.')
       default: throw new Error(`unsupported action: ${String(args.action)}`)
     }
   }
   return {
     name: 'playbook',
-    description: 'Choose and execute a task SOP. For a new work request use route (automatic selection/start); recommend is read-only and inspect shows the complete SOP. Ambiguous tasks: select a suitable playbook_id with note explaining the fit, or ask only for missing task requirements. Never ask the user to memorize SOP names. Active runs are never replaced by route. Submit evidence for the current stage; do not advance in prose. Cancel only when the user requests stopping, never to bypass a gate.',
+    description: 'Choose and execute a task SOP. For a new work request use route (automatic selection/start); recommend is read-only and inspect shows the complete SOP. Ambiguous tasks: select a suitable playbook_id with note explaining the fit, or ask only for missing task requirements. Never ask the user to memorize SOP names. Active runs are never replaced by route. Do actual work before submitting evidence. Use check for a read-only preflight and repair format errors, not fabricated values. Missing inputs/tools: block with a reason. A blocked or terminal run is not completion. report exposes an audit trace. cancel/resume are human commands, not model escape hatches.',
     parameters: {
-      action: { type: 'string', required: true, enum: ['list', 'inspect', 'recommend', 'route', 'start', 'status', 'submit', 'reload', 'cancel'] },
+      action: { type: 'string', required: true, enum: ['list', 'inspect', 'recommend', 'route', 'start', 'status', 'check', 'submit', 'block', 'report', 'reload', 'cancel'] },
       task: { type: 'string', description: 'Concise user task for recommend/route; the current captured user request is used when available.' },
       playbook_id: { type: 'string', description: 'Required for start/inspect; optional semantic selection for route.' },
       stage_id: { type: 'string', description: 'Required for submit: expected current stage id.' },

@@ -113,14 +113,15 @@ export class PlaybookRouter {
   }
   view(id) {
     const state = this.session(id)
-    return { enabled: state.enabled, pending: !!state.pendingTask && !this.engine.activeRun(id), lastDecision: structuredClone(state.lastDecision) }
+    return { enabled: state.enabled, pending: !!state.pendingTask && !this.engine.attachedRun(id), lastDecision: structuredClone(state.lastDecision) }
   }
   clear(id) { this.session(id).pendingTask = '' }
   async route(id, { task, playbookId, note = '', origin = 'agent', signal } = {}) {
     const work = async () => {
       signal?.throwIfAborted()
-      if (this.engine.activeRun(id)) return { ok: true, reused: true, status: this.engine.status(id), message: '当前 SOP 仍在执行；不会自动替换或取消。新任务请另开会话或由用户明确取消当前流程。' }
+      if (this.engine.attachedRun(id)) return { ok: true, reused: true, status: this.engine.status(id), message: '当前 SOP 尚未结束（可能处于阻塞状态）；不会自动替换或取消。新任务请另开会话或由用户明确取消当前流程。' }
       const state = this.session(id)
+      if (origin === 'agent' && this.engine.status(id).run && !state.pendingTask) throw new Error('Previous run is terminal. A fresh user task or /playbook start is required; do not restart to reset budgets.')
       const actual = requireTask(state.pendingTask || task)
       const decision = this.recommend(actual)
       const selected = playbookId || decision.recommendedId
@@ -143,7 +144,7 @@ export class PlaybookRouter {
     return next
   }
   guard(id, toolName) {
-    if (!this.view(id).pending || this.engine.activeRun(id)) return undefined
+    if (!this.view(id).pending || this.engine.attachedRun(id)) return undefined
     // run_code is a transport; nested native calls re-enter this same guard.
     if (['playbook', 'run_code', 'ask_user_question', 'AskUserQuestion'].includes(toolName)) return undefined
     return '请先调用 playbook(action="route") 自动选择 SOP；流程未确定前不执行工作工具。仅缺关键需求时询问用户。'

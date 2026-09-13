@@ -1,3 +1,4 @@
+import { strengthenPlaybook } from './quality.js'
 import { SOP_PLAYBOOKS } from './sops.js'
 
 export const BUILTIN_PLAYBOOKS = [
@@ -97,4 +98,4 @@ export const BUILTIN_PLAYBOOKS = [
     ],
   },
   ...SOP_PLAYBOOKS,
-]
+].map(strengthenPlaybook)

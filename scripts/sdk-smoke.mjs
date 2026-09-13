@@ -10,9 +10,9 @@ for (const p of BUILTIN_PLAYBOOKS) engine.register(p)
 const router = new PlaybookRouter(engine)
 const tool = createPlaybookTool(engine, async () => engine.listPlaybooks(), router)
 assert.equal(tool.name, 'playbook')
-assert.ok(tool.parameters.properties.action.enum.includes('route'))
+for (const action of ['route', 'check', 'block', 'report']) assert.ok(tool.parameters.properties.action.enum.includes(action))
 const exec = { agent: { id: 'sdk-smoke' }, signal: new AbortController().signal }
-for (const args of [{ action: 'list' }, { action: 'inspect', playbook_id: 'dsh-plugin-development' }, { action: 'route', task: '修复这个接口的bug' }, { action: 'status' }]) {
+for (const args of [{ action: 'list' }, { action: 'inspect', playbook_id: 'dsh-plugin-development' }, { action: 'route', task: '修复这个接口的bug' }, { action: 'status' }, { action: 'check', stage_id: 'reproduce', evidence: {} }, { action: 'block', note: 'Synthetic SDK smoke: a required input is unavailable.' }, { action: 'report' }]) {
   const value = await tool.execute(args, exec)
   assert.deepEqual(value, JSON.parse(JSON.stringify(value)))
   assert.ok(tool.output.render(args, value)[0].text)
