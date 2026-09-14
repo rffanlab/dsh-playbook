@@ -1,3 +1,4 @@
+import { TAOIST_VIDEO } from './domain-sops.js'
 import { videoSop } from './video-sop.js'
 import { strengthenPlaybook } from './quality.js'
 import { SOP_PLAYBOOKS } from './sops.js'
@@ -99,4 +100,5 @@ export const BUILTIN_PLAYBOOKS = [
     ],
   },
   ...SOP_PLAYBOOKS,
+  TAOIST_VIDEO,
 ].map(videoSop).map(strengthenPlaybook)

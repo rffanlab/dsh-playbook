@@ -1,3 +1,4 @@
+import { isVideoTask, mentionsSource } from './intake-policy.js'
 import { reviewFeedback } from './run-control.js'
 /** Public DSH pre-step adapter. SDK message construction is supplied by the Host entry. */
 export function installAutoRouting(ctx, engine, router, { ready = async () => {}, createMessage, onError = console.error } = {}) {
@@ -44,12 +45,15 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
       const decision = router.remember(id, task)
       if (decision.kind === 'conversation') return downstream
       let instruction
-      if (decision.kind === 'match' && raw.length <= 4000) {
-        const routed = await router.route(id, { task, origin: 'auto', signal })
+      const documentAttached = fresh.some(m => (m.content ?? []).some(b => !['text','image','audio','video'].includes(b.type)))
+      const requiresIntake = isVideoTask(raw) || mentionsSource(raw) || documentAttached
+      router.projects?.capture(id, task, { attachment: documentAttached })
+      if (decision.kind === 'match' && raw.length <= 4000 && !requiresIntake) {
+        const routed = await router.route(id, { task, origin: 'auto', signal, exec: { agent, signal } })
         instruction = `${routed.message}\n${routed.status?.instruction ?? ''}`
       } else {
         const summaries = engine.listPlaybooks().map(p => `${p.id}: ${p.description}`).join('\n')
-        instruction = 'SOP 接单：用户只需给任务，不必记命令。请根据交付意图判断适用流程，先调用 playbook(action="route", playbook_id=选中的ID, note=选择理由)。\n'
+        instruction = 'SOP 接单（先读后选）：视频/任务书请求不可仅凭平台关键词直接启动。允许 read/grep/glob 等只读发现；先读完整任务文档，调用 intake（project_id、requirements、source_call_ids），项目 ID 由你根据真实项目决定，不要求用户记。\n当前任务的主题、输出路径属于 input，不要每期创建新 SOP。用 sop_list/sop_inspect 优先查该项目已确认方法；不适配时 sop_validate/sop_save 起草试用定义，不能削弱已确认规则或替换在途流程。\n道家文化内容即使发布到 B 站仍按文化项目处理。没有任务文档时以用户原始任务登记；提到但拿不到文档时先索取，不伪造读取。\n用户只需给任务，不必记命令。请根据交付意图判断适用流程，先调用 playbook(action="route", playbook_id=选中的ID, note=选择理由)。\n'
           + '可先用 action=recommend 查询候选，或 action=inspect 阅读完整流程。不要让用户在内部 SOP 名称中选择。\n'
           + '只有缺少会改变执行结果的目标/输入/范围时才追问；不要复问已有信息。无专用流程时明确说明并选择 task-intake。复合任务先界定先后顺序，不声称已并行跑完多个 SOP。\n'
           + `规则候选（不是命令，也不是概率）：${JSON.stringify(decision.candidates)}\n可用目录：\n${summaries}`

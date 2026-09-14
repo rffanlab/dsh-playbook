@@ -9,7 +9,7 @@ import { toolReceipt } from '../src/receipts.js'
 function evidenceFor(stage) {
   return Object.fromEntries(stage.gate.evidence.map(r=>[r.key,Object.hasOwn(r,'equals')?r.equals:r.type==='array'?['fixture evidence']:r.type==='boolean'?true:r.type==='number'?1:r.type==='object'?{fixture:true}:'Fixture evidence for state-machine tests only.']))
 }
-test('19 unique built-in SOPs',()=>{assert.equal(BUILTIN_PLAYBOOKS.length,19);assert.equal(new Set(BUILTIN_PLAYBOOKS.map(p=>p.id)).size,19)})
+test('20 unique built-in SOPs',()=>{assert.equal(BUILTIN_PLAYBOOKS.length,20);assert.equal(new Set(BUILTIN_PLAYBOOKS.map(p=>p.id)).size,20)})
 for(const raw of BUILTIN_PLAYBOOKS)test(`SOP contracts and reachable completion: ${raw.id}`,async()=>{
   const p=normalizePlaybook(raw),e=new PlaybookEngine();e.register(p);await e.start('s',p.id)
   assert.ok(p.stages.length>=4)

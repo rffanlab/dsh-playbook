@@ -14,7 +14,7 @@ const cases = [
   ['DeepSeek Harness 启动不了了，帮我修一下', 'incident-response'], ['Restore the production service after an outage', 'incident-response'],
   ['在Ubuntu上部署一个systemd服务', 'linux-service-deploy'], ['Deploy this service on Linux', 'linux-service-deploy'],
   ['在Ubuntu部署Qwen GGUF模型', 'model-deployment'], ['Serve a local model with vLLM', 'model-deployment'],
-  ['帮我做一条道家文化短视频', 'short-video-production'], ['Produce a short video about this experiment', 'short-video-production'],
+  ['帮我做一条道家文化短视频', 'taoist-culture-video'], ['Produce a short video about this experiment', 'short-video-production'],
   ['帮我做一期B站本地模型实测视频', 'bilibili-video-production'], ['Produce a Bilibili tutorial', 'bilibili-video-production'],
   ['帮我审一下这个视频', 'video-review'], ['Review the rendered video', 'video-review'],
   ['帮我写篇公众号介绍这个插件', 'wechat-article'], ['Write a WeChat article', 'wechat-article'],

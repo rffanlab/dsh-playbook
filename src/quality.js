@@ -2,7 +2,7 @@
 const COMMAND_GATES = new Set(['bug-fix/verify', 'feature-development/verify', 'plugin-development/verify', 'dsh-plugin-development/package-check', 'release/build'])
 export function strengthenPlaybook(input) {
   const playbook = structuredClone(input)
-  playbook.version = '0.4.0'
+  playbook.version = '0.5.0'
   for (const stage of playbook.stages) {
     stage.instructions ??= []
     stage.instructions.push('Complete the actual stage work before reporting evidence. Do not fabricate files, observations or execution results to fill the form. The user deliverable is not the SOP evidence form.')

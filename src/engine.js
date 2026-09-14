@@ -31,6 +31,7 @@ export class PlaybookEngine {
     this.runs = new Map()
     this.archives = new Map()
     this.queue = Promise.resolve()
+    this.sopLibrary = { projects: {}, bindings: {} }
   }
 
   serialize(task) {
@@ -38,7 +39,8 @@ export class PlaybookEngine {
     const transaction = async () => {
       const before = new Map([...this.runs].map(([key, value]) => [key, clone(value)]))
       const archived = new Map([...this.archives].map(([key, value]) => [key, clone(value)]))
-      try { return await task() } catch (error) { this.runs = before; this.archives = archived; throw error }
+      const library = clone(this.sopLibrary)
+      try { return await task() } catch (error) { this.runs = before; this.archives = archived; this.sopLibrary = library; throw error }
     }
     const next = this.queue.then(transaction, transaction)
     this.queue = next.catch(() => {})
@@ -73,6 +75,7 @@ export class PlaybookEngine {
 
   hydrate(snapshot) {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return
+    if (snapshot.sopLibrary?.projects && snapshot.sopLibrary?.bindings) this.sopLibrary = clone(snapshot.sopLibrary)
     for (const [id, rows] of Object.entries(snapshot.archives ?? {})) if (Array.isArray(rows)) this.archives.set(id, clone(rows.slice(-20)))
     const rows = snapshot.runs && typeof snapshot.runs === 'object' ? snapshot.runs : {}
     for (const [sessionId, run] of Object.entries(rows)) {
@@ -82,7 +85,7 @@ export class PlaybookEngine {
   }
 
   snapshot() {
-    return { version: 2, archives: Object.fromEntries(this.archives), runs: Object.fromEntries([...this.runs.entries()].map(([key, value]) => [key, clone(value)])) }
+    return { version: 3, sopLibrary: clone(this.sopLibrary), archives: Object.fromEntries(this.archives), runs: Object.fromEntries([...this.runs.entries()].map(([key, value]) => [key, clone(value)])) }
   }
 
   async save() {
@@ -111,12 +114,12 @@ export class PlaybookEngine {
     return playbook ? stageById(playbook, run.stageId) : undefined
   }
 
-  async start(sessionId, playbookId, input = {}, { signal } = {}) {
+  async start(sessionId, playbookId, input = {}, { signal, definition } = {}) {
     return this.serialize(async () => {
       signal?.throwIfAborted()
       const key = String(sessionId)
       if (['active', 'blocked'].includes(this.runs.get(key)?.state)) throw new Error(`session ${key} already has an active playbook`)
-      const playbook = this.getPlaybook(playbookId)
+      const playbook = definition ? normalizePlaybook(definition) : this.getPlaybook(playbookId)
       if (!playbook) throw new Error(`unknown playbook: ${playbookId}`)
       if (input !== undefined && (input === null || typeof input !== 'object' || Array.isArray(input))) throw new Error('playbook input must be an object')
       const at = nowIso(this.clock)

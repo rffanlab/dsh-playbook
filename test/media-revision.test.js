@@ -110,7 +110,7 @@ test('starting another task archives rather than erases prior history, including
 })
 test('system counts derive from stage definitions/events instead of submitted fake numbers',async()=>{
   const e=await engineFixture();await advance(e)
-  const report=e.report('s');assert.equal(report.summary.normalPathStageCount,8);assert.equal(report.summary.declaredStageCount,9);assert.equal(report.summary.gatesPassed,8)
+  const report=e.report('s');assert.equal(report.summary.normalPathStageCount,9);assert.equal(report.summary.declaredStageCount,10);assert.equal(report.summary.gatesPassed,9)
   assert.match(reportMarkdown(report),/not independently|Not independently/);assert.equal(report.summary.humanReviewRejections,0)
 })
 test('long-running validation cannot commit after a stage/revision change',async()=>{
@@ -163,7 +163,7 @@ test('report export content/path are engine-owned and only its exact nested writ
   }}}
   const exec={agent:{id:'s'},token:Symbol(),callId:'export',signal:new AbortController().signal}
   const result=await createReportExporter(ctx,e,pending)(exec)
-  assert.match(result.path,/execution-report\.system\.r0\./);assert.match(saved.arguments.content,/"normalPathStageCount": 8/)
+  assert.match(result.path,/execution-report\.system\.r0\./);assert.match(saved.arguments.content,/"normalPathStageCount": 9/)
   assert.equal(result.runId,e.status('s').run.id);assert.equal(pending.size,0)
 })
 test('a failed Host write does not fabricate a saved report or fall back to direct FS',async()=>{

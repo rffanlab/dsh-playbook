@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+- Read-first project intake for video and referenced-document tasks; permit read-only discovery before routing.
+- Immutable workspace + project SOP library, trial/draft/approved lifecycle, exact-revision human approval and stale-parent checks.
+- Conservative protected-contract comparisons; reject generic, renamed and obsolete-version replacement of approved methods.
+- Preserve run-level project requirements/provenance and definition snapshots; deduplicate methods across episode inputs.
+- Separate Taoist culture from Bilibili experiment/tutorial domain stages while retaining media checks.
+- Add project SOP review/approval UI and commands; state schema v3 with v1/v2 reads.
+- Ignore legacy overrides of built-in IDs with a warning.
+- Add source-receipt, project isolation, approval, method-reuse, SDK and regression coverage. No live MiniMax result claimed.
+
 ## 0.4.0
 
 - Independent, guarded Python/FFmpeg artifact checks for the two narrated-video SOPs; full-text mapping, pilot, real PCM, subtitle coverage, final hash binding and stale-cover detection.

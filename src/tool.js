@@ -19,24 +19,32 @@ export function conciseStatus(status) {
   if (!status.active) return `${status.run.playbookId} is ${status.run.state}.`
   return `${status.run.playbookId} → ${status.run.stageId} (attempt ${status.run.stageAttempt}).\n${status.instruction}`
 }
-export function playbookDefinition(engine, reloadCatalog, router, ready = async () => {}, runChecks, exportReport) {
+export function playbookDefinition(engine, reloadCatalog, router, ready = async () => {}, runChecks, exportReport, projects) {
   async function handle(args, exec) {
     switch (args.action) {
-      case 'list': return { ok: true, playbooks: engine.listPlaybooks() }
+      case 'list': return { ok: true, playbooks: engine.listPlaybooks(), projectSops: projects?.list(exec) ?? [] }
+      case 'intake_status': return { ok: true, intake: projects?.view(exec) ?? null }
+      case 'intake': { if (!projects) throw new Error('Project library unavailable'); return projects.intake(exec, args) }
+      case 'sop_list': return { ok: true, sops: projects?.list(exec) ?? [] }
+      case 'sop_inspect': { if (!projects) throw new Error('Project library unavailable'); return { ok: true, sop: projects.inspect(exec, args.sop_id, args.sop_revision) } }
+      case 'sop_validate': { if (!projects) throw new Error('Project library unavailable'); return projects.validate(exec, args) }
+      case 'sop_save': { if (!projects) throw new Error('Project library unavailable'); return projects.save(exec, args) }
       case 'inspect': {
         const p = engine.getPlaybook(args.playbook_id)
         if (!p) throw new Error(`unknown playbook: ${args.playbook_id}`)
         return { ok: true, playbook: p }
       }
       case 'recommend': return { ok: true, decision: router.recommend(args.task || router.session(sessionId(exec)).pendingTask) }
-      case 'route': return router.route(sessionId(exec), { task: args.task, playbookId: args.playbook_id, note: args.note ?? '', signal: exec.signal })
+      case 'route': return router.route(sessionId(exec), { task: args.task, playbookId: args.playbook_id, note: args.note ?? '', signal: exec.signal, exec, sopId: args.sop_id, revision: args.sop_revision })
       case 'reload': return { ok: true, playbooks: await reloadCatalog() }
       case 'start': {
         const id = sessionId(exec)
         if (engine.status(id).run?.state === 'awaiting_review') throw new Error('Candidate awaits user review; use explicit user revision or acceptance, not a new model-started SOP')
         if (engine.status(id).run && !engine.attachedRun(id) && !router.session(id).pendingTask) throw new Error('A fresh user task or /playbook start is required before restarting a terminal run')
         if (!args.playbook_id) throw new Error('playbook_id is required for start')
-        const status = await engine.start(sessionId(exec), args.playbook_id, inputObject(args.input), { signal: exec.signal })
+        const authorized = projects?.authorize(exec, { playbookId: args.playbook_id }) ?? {}
+        const { project, contract, sop, ...manualInput } = inputObject(args.input)
+        const status = await engine.start(sessionId(exec), args.playbook_id, { ...manualInput, ...authorized.input }, { signal: exec.signal, definition: authorized.definition })
         router.clear(sessionId(exec))
         return { ok: true, status, message: conciseStatus(status) }
       }
@@ -80,9 +88,20 @@ export function playbookDefinition(engine, reloadCatalog, router, ready = async 
   }
   return {
     name: 'playbook',
-    description: 'Choose and execute a task SOP. For a new work request use route (automatic selection/start); recommend is read-only and inspect shows the complete SOP. Ambiguous tasks: select a suitable playbook_id with note explaining the fit, or ask only for missing task requirements. Never ask the user to memorize SOP names. Active runs are never replaced by route. Do actual work before submitting evidence. Use check for a read-only preflight and repair format errors, not fabricated values. A failed SOP still governs work: use bounded repair with a target stage and diagnosis; never work outside it. The exact {item:[...]} array mistake is corrected and recorded losslessly. Video submit runs independent Host media checks; self-reported release_ready cannot replace them. Missing inputs/tools: block with a reason. A blocked or terminal run is not completion. report exposes an audit trace. cancel/resume are human commands, not model escape hatches.',
+    description: 'Read referenced task documents before selecting a SOP. Use intake_status to see real read call IDs, then intake to identify the project, task requirements and sources. Project SOPs use sop_list/inspect/validate/save; new versions are immutable trials, protected changes become non-executable drafts until human approval. Never rename/rewrite SOPs to evade a failing gate. Topics/platforms are task inputs, not separate workflows. Choose and execute a task SOP. For a new work request use route (automatic selection/start); recommend is read-only and inspect shows the complete SOP. Ambiguous tasks: select a suitable playbook_id with note explaining the fit, or ask only for missing task requirements. Never ask the user to memorize SOP names. Active runs are never replaced by route. Do actual work before submitting evidence. Use check for a read-only preflight and repair format errors, not fabricated values. A failed SOP still governs work: use bounded repair with a target stage and diagnosis; never work outside it. The exact {item:[...]} array mistake is corrected and recorded losslessly. Video submit runs independent Host media checks; self-reported release_ready cannot replace them. Missing inputs/tools: block with a reason. A blocked or terminal run is not completion. report exposes an audit trace. cancel/resume are human commands, not model escape hatches.',
     parameters: {
-      action: { type: 'string', required: true, enum: ['list', 'inspect', 'recommend', 'route', 'start', 'status', 'check', 'submit', 'block', 'repair', 'report', 'export_report', 'reload', 'cancel'] },
+      action: { type: 'string', required: true, enum: ['intake_status', 'intake', 'sop_list', 'sop_inspect', 'sop_validate', 'sop_save', 'list', 'inspect', 'recommend', 'route', 'start', 'status', 'check', 'submit', 'block', 'repair', 'report', 'export_report', 'reload', 'cancel'] },
+      project_id: { type: 'string', description: 'Business project ID under Host session cwd (e.g. taoist-culture or bilibili-ai); chosen by Agent during intake, never a filesystem path.' },
+      source_call_ids: { type: 'array', items: { type: 'string' }, description: 'Actual read-tool call IDs covering task documents; see intake_status.' },
+      requirements: { type: 'array', items: { type: 'string' }, description: 'This task requirements extracted from the original user request/read documents. Persisted with the run, not mutable while running.' },
+      sop_id: { type: 'string', description: 'Project-local SOP ID for creation/inspection or routing a saved version.' },
+      sop_revision: { type: 'string', description: 'Exact immutable saved revision; default is approved version or latest trial.' },
+      base_id: { type: 'string', description: 'Installed base contract from inspect. A video SOP must inherit an appropriate video base.' },
+      rules: { type: 'array', items: { type: 'string' }, description: 'Stable project requirements, not episode topic/output paths. Removing confirmed rules requires human approval.' },
+      stage_notes: { ...object, description: 'Map of existing stage ID to additional instructions (string array). Inherits base gates unchanged.' },
+      definition: { ...object, description: 'Optional complete proposed SOP definition. Removing/rewriting protected clauses creates a draft requiring review.' },
+      name: { type: 'string' },
+      description: { type: 'string' },
       task: { type: 'string', description: 'Concise user task for recommend/route; the current captured user request is used when available.' },
       playbook_id: { type: 'string', description: 'Required for start/inspect; optional semantic selection for route.' },
       stage_id: { type: 'string', description: 'Required for submit: expected current stage id.' },

@@ -1,3 +1,4 @@
+import { domainStages } from './domain-sops.js'
 /** The two video production SOPs share technical contracts, not audience assumptions. */
 const text = key => ({ key, type: 'string', minLength: 1 })
 const list = key => ({ key, type: 'array', minItems: 1 })
@@ -8,19 +9,21 @@ function stage(id, title, instructions, evidence, kind, back) {
     retry: { maxAttempts: 2, onExhausted: back ? `branch:${back}` : 'fail' } }
 }
 export function videoSop(original) {
-  if (!['bilibili-video-production', 'short-video-production'].includes(original.id)) return original
+  if (!['bilibili-video-production', 'short-video-production', 'taoist-culture-video'].includes(original.id)) return original
   const p = structuredClone(original)
   p.delivery = { review: true, revisionStage: 'diagnose', maxRevisions: 2,
     repairStages: ['script', 'pilot', 'produce', 'qa', 'content-review'], maxSelfRepairs: 3 }
   const brief = structuredClone(original.stages[0])
   brief.instructions.push('Record required deliverables and factual claims. For experiments the result is UNKNOWN until measured: do not promise success or pre-write all-gates-passed, zero interventions or A-grade claims.')
+  brief.instructions.push('Use the frozen project/task contract in status.input. Do not silently revise a supplied script or production method. Platform and this episode topic are inputs, not workflow identity.')
   p.stages = [brief,
+    ...domainStages(p.id),
     stage('capabilities', '核实可用生产工具 / Verify actual production capabilities', [
       'Inspect the public tool/schema/service/template inventory and perform a minimal safe probe. Absence of a CLI does not prove local ComfyUI/TTS services are unavailable.',
       'Reuse working public pipelines before installing replacements. Do not read prohibited historical experiment answers. Record inaccessible capabilities, not invented installations.',
     ], [list('capability_evidence'), text('selected_pipeline'), text('limits')]),
     stage('script', '冻结完整口播与逐段输入 / Freeze full narration and exact segment inputs', [
-      'Write a UTF-8 plain spoken script (Markdown without unspoken headings is fine). Create production.json schemaVersion=1, script path, segments[{id,text}].',
+      'Use the full user-approved spoken script when provided; do not rewrite it merely because this is the script stage. Otherwise author within the task requirements. Save a UTF-8 spoken-only script and production.json schemaVersion=1, script path, segments[{id,text}].',
       'Concatenated segment text must equal the FULL script (whitespace-only normalization). Never use scene summaries such as “我做了三件事...” as TTS input. Do not change the approved script later without repairing back here.',
       'The production_manifest path is relative to the DSH session workspace or an absolute path inside it. All artifact paths in it resolve relative to this manifest. The plugin independently reads the files on submit.',
       'For an experiment, source any measured result from playbook report and actual tools; claims about this unfinished delivery must remain unproven, not a prewritten victory.',
@@ -59,7 +62,9 @@ export function videoSop(original) {
     ], [text('defect'), list('evidence')], null),
   ]
   // Revision diagnosis is off the normal success path.
+  for (let i=0; i<p.stages.length; i++) p.stages[i].next = p.stages[i+1]?.id ?? null
   p.stages.find(s => s.id === 'handoff').next = null
-  p.stages.find(s => s.id === 'diagnose').next = 'script'
+  p.delivery.repairStages = [...domainStages(p.id).map(s=>s.id), ...p.delivery.repairStages]
+  p.stages.find(s => s.id === 'diagnose').next = domainStages(p.id)[0]?.id ?? 'script'
   return p
 }

@@ -2,94 +2,56 @@
 
 [中文](README.md)
 
-**Give a task. Select its SOP automatically. Execute through stages and gates.**
+**Keep working methods as project SOPs: read the task, select or propose a method, execute through stages, evidence and validators.**
 
-Version 0.4.0 ships **19 starter workflows** for engineering, review, releases, recovery, deployment, content, music, research, analysis and SOP authoring. This extends DeepSeek Harness rather than replacing its Agent runtime.
+## 0.5.0: project methods
 
+Video and referenced-document tasks no longer start solely on keywords. The Agent reads sources, identifies the project, reuses its SOP or saves a derived trial. Taoist culture and Bilibili experiment/tutorial work retain different domain stages even when both publish to Bilibili. Narration/media checks, hashes and controlled revision remain shared. There are 20 built-in bases and a separate persistent project library.
 
-## 0.4.0: real artifact checks and same-run revisions
+Trials are not approved methods. Versions are immutable; protected-rule changes are non-executable drafts until a human approves the exact revision. Active runs retain their pinned definitions.
 
-Adds canonical-script/segment/subtitle coverage, a first-segment pilot, decoded PCM/media checks, artifact hashes and stale-cover detection, awaiting_review, same-run revisions, bounded repair and event-generated reports. The full media contract applies to new narrated-video production runs; other SOPs gain generic control improvements.
+## Update
 
-See [media and revision guide](docs/MEDIA-REVISION.en.md). Requires existing Python 3.9+, FFmpeg/ffprobe; no automatic installer, new model or Host-policy bypass. This is not ASR, visual semantic review or a measured MiniMax quality gain.
-
-## 0.3.0 execution-quality fixes
-
-Adds Host command-receipt gates, read-only `check`, separate format repairs, durable blocking/human resume, stale-evidence invalidation and run reports. Automatic intake and all 19 SOPs remain. The model cannot reset gates through cancel/start; human controls remain available. See [execution receipts and format repair](docs/QUALITY.en.md). Existing runs retain old pinned definitions; test new gates in a fresh session.
-
-## Start directly
-
-Update using the original service account, `DSH_HOME`, and Web Profile:
+Use the original service account, DSH_HOME and Web Profile. Back up the state file first:
 
 ```bash
 dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 ```
 
-Restart DSH, refresh the Web Client and open a new conversation. Send a task such as “Build a DeepSeek Harness plugin”, “Write a WeChat article about this plugin”, or “Deploy a local Qwen model”. No initial `/playbook start`, hand-written JSON or manual evidence submission is required.
+Restart the Profile, refresh the page and open a new session with the task brief. No daily manual SOP selection, JSON authoring or evidence submission is required.
 
-Clear literal-rule matches are attached before work. Ambiguous matches are handed to the current Agent, which inspects the catalog and selects with a reason. The Agent asks only missing requirements, not which internal SOP name the user prefers. Ordinary chat and usage explanations do not require a workflow. No separate classifier model, credentials or online service is added.
+Read [project SOPs and migration](docs/PROJECT-SOPS.en.md), [routing](docs/AUTO-ROUTING.en.md), [media contracts/revisions](docs/MEDIA-REVISION.en.md) and [receipt/format handling](docs/QUALITY.en.md). Older documentation describes its respective release, not a claim of live-model validation for new features.
 
-An active run is not silently replaced by a clarification or another task. Use a new session for independent work. Automatic parallel multi-SOP decomposition is not implemented.
-
-See [automatic routing](docs/AUTO-ROUTING.en.md) and the [SOP catalog](docs/SOP-CATALOG.en.md).
-
-## Included scope
-
-| Category | SOP IDs |
-|---|---|
-| Engineering | `bug-fix`, `feature-development`, `plugin-development`, `dsh-plugin-development`, `code-review` |
-| Delivery and operations | `release`, `incident-response`, `linux-service-deploy`, `model-deployment` |
-| Content and music | `short-video-production`, `bilibili-video-production`, `video-review`, `wechat-article`, `music-production`, `music-release` |
-| Research and intake | `research-report`, `data-analysis`, `sop-authoring`, `task-intake` |
-
-Every definition includes concrete instructions, evidence requirements and failure handling. `task-intake` is explicitly a fallback for unclassified tasks, not a universal expert method. These are starter templates, not empirically proven optimal workflows or evidence that a smaller model matches a larger one.
-
-## Manual controls
+## Control
 
 Enter in DSH chat, not the shell:
 
 ```text
-/playbook list
-/playbook inspect dsh-plugin-development
-/playbook recommend Write a WeChat article
 /playbook status
-/playbook status json
 /playbook report
-/playbook revise
-/playbook accept
-/playbook resume
+/playbook project
+/playbook sops
+/playbook sop <sop-id> <revision>
+/playbook approve <sop-id> <full-revision>
 /playbook auto off
-/playbook auto on
-/playbook start bug-fix
 /playbook cancel
-/playbook reload
 ```
 
-`recommend` is read-only. Per-session `auto off` disables subsequent intake without cancelling an active run, and resets on Host restart. Set `DSH_PLAYBOOK_AUTO_ROUTE=0` for deployment-wide manual-by-default operation.
+The Web Playbook panel lists project SOPs and requires inspection before exact-version approval. This is a method-level decision, not approval of every execution. Approval is not a model action.
 
-The existing Settings → Plugins → Playbook panel still shows the catalog and current-session Stage/Gate/tool observations and provides manual start/cancel. Automatic selection does not require opening it.
+New Agent actions: intake_status/intake/sop_list/sop_inspect/sop_validate/sop_save. Existing route, execution, check, repair and report actions remain. Automatic trials are allowed; confirmed-rule changes require review. Schema validity is not domain expertise.
 
-## Custom SOPs and tools
+## Limits
 
-User JSON definitions load from `${DSH_HOME:-~/.dsh}/playbooks`; override with `DSH_PLAYBOOK_DIR`. `DSH_PLAYBOOK_STATE` overrides the durable run-state file. Reload with `/playbook reload`. A matching user ID overrides a built-in for future starts; active runs keep their pinned snapshot.
+Scopes combine Host session cwd and project_id. The original state file gains sopLibrary in format v3, reading v1/v2. Existing runs stay pinned; restore a matching state backup before downgrading. Storage is single-writer with at most 100 immutable versions per project.
 
-Top-level routing metadata supports `groups`, `keywords`, `exclude`, `priority`, `autoStart` and `examples`. Definitions without routing metadata remain explicitly selectable by the Agent or user.
+Legacy JSON files with built-in IDs are warned and ignored; other custom legacy IDs still load globally and are not automatically approved project methods. Use the managed interface rather than model edits to global files.
 
-The `playbook` model tool provides `list/inspect/recommend/route/start/status/check/submit/block/repair/report/export_report/reload`. Both `check` and `submit` require an explicit `stage_id`. Model-side `cancel` remains only as a compatibility entry that returns a clear error; cancellation and resume are human command/panel controls.
+Strong source receipts support UTF-8 read windows; a complete pasted brief also works as input. Source relevance, exhaustive extraction and semantic conflicts still need model/human review. Static interface protections are not an OS sandbox, signature or defense against same-process/file-writing code.
 
-## Guarantees and limits
+Media checks require Python 3.9+, FFmpeg and ffprobe; no new model/API key. No ASR or independent semantic Reviewer is included. Technical success is not content quality or user acceptance.
 
-Stage gates, retries/branches, snapshot pinning and durable run state remain. Automatic starts wait for state hydration. Stage context includes actual evidence type/length/count/equality requirements plus a bounded prior-evidence summary. A default 64-submission execution-gate budget bounds loops, with a separate three-repair format budget before blocking; neither is a token or wall-clock limit.
-
-Tool-name policies use DSH guards, not an OS sandbox. Denying `write`/`edit` does not prevent all shell-based writes. Semantic evidence is structurally validated, not independently proven. Observed `bash` tool success is not a zero exit status or a passing-test guarantee.
-
-SOPs do not include video/music/model engines. Missing capabilities must be reported, not replaced with fabricated artifacts. Automatic selection grants no additional publication, upload, deletion, purchase, signing or account authority. Existing user authorization and Host policy remain in force. State storage targets a single Host process, not concurrent multi-process writers.
-
-Independent Test/Reviewer validators, automatic worker/model routing and a full visual editor are not implemented. The two narrated-video SOPs now have artifact validators; see the 0.4.0 guide.
-
-## Verification
-
-From a source checkout, without model calls:
+## Tests
 
 ```bash
 npm test
@@ -98,10 +60,6 @@ npm run packcheck
 npm run mediatest
 ```
 
-With actual DSH peer dependencies installed, `npm run sdkcheck` verifies SDK imports, tool definitions, canonical output and message creation. CI runs offline tests on Node 20/22/24 and a separate current-published-SDK contract smoke. This is not a live deployment-version Web Profile/browser/model end-to-end test.
-
-For A/B evaluation, use identical initial code/assets, model and tools. Disable automatic selection in A with no active run, and leave B enabled. Compare real acceptance, turns, calls, rework and human intervention. Never let B inherit changes already made by A.
-
-## License
+With actual DSH peers installed, run npm run sdkcheck. CI covers Node 20/22/24, SDK contracts and synthetic media decoding, not the user's live E5/Web/browser/MiniMax end-to-end path.
 
 MIT

@@ -1,3 +1,4 @@
+import { INTAKE_READ_TOOLS } from './intake-policy.js'
 /** Deterministic, literal-only routing. Scores are ranking hints, never probabilities. */
 function strings(value, label, limit = 40) {
   if (value === undefined) return []
@@ -116,7 +117,7 @@ export class PlaybookRouter {
     return { enabled: state.enabled, pending: !!state.pendingTask && !this.engine.attachedRun(id), lastDecision: structuredClone(state.lastDecision) }
   }
   clear(id) { this.session(id).pendingTask = '' }
-  async route(id, { task, playbookId, note = '', origin = 'agent', signal } = {}) {
+  async route(id, { task, playbookId, note = '', origin = 'agent', signal, exec, sopId, revision } = {}) {
     const work = async () => {
       signal?.throwIfAborted()
       if (this.engine.attachedRun(id)) return { ok: true, reused: true, status: this.engine.status(id), message: '当前 SOP 尚未结束（可能处于阻塞状态）；不会自动替换或取消。新任务请另开会话或由用户明确取消当前流程。' }
@@ -124,16 +125,17 @@ export class PlaybookRouter {
       if (origin === 'agent' && this.engine.status(id).run && !state.pendingTask) throw new Error('Previous run is terminal. A fresh user task or /playbook start is required; do not restart to reset budgets.')
       const actual = requireTask(state.pendingTask || task)
       const decision = this.recommend(actual)
-      const selected = playbookId || decision.recommendedId
+      const selected = sopId || playbookId || decision.recommendedId
       if (!selected) return { ok: true, needsSelection: true, decision, fallbackId: 'task-intake',
         message: '请 Agent 根据实际目标选择 SOP，再用 action=route、playbook_id、note 调用。只在交付物/范围不明确时向用户追问，不要求用户挑 SOP 名称。' }
-      if (!this.engine.getPlaybook(selected)) throw new Error(`unknown playbook: ${selected}`)
+      const authorized = this.projects && origin !== 'command' ? this.projects.authorize(exec ?? { agent: { id } }, { playbookId: selected, sopId, revision }) : {}
+      if (!authorized.definition && !this.engine.getPlaybook(selected)) throw new Error(`unknown playbook: ${selected}`)
       if (playbookId && playbookId !== decision.recommendedId && (typeof note !== 'string' || note.trim().length < 8)) throw new Error('semantic selection requires note explaining the fit (at least 8 characters)')
       signal?.throwIfAborted()
-      const status = await this.engine.start(String(id), selected, { task: actual, routing: {
+      const status = await this.engine.start(String(id), selected, { task: actual, ...authorized.input, routing: {
         method: playbookId ? 'agent-selected' : origin === 'auto' ? 'auto-rule' : 'rule',
         reason: note || decision.reason, confidence: decision.confidence,
-      } }, { signal })
+      } }, { signal, definition: authorized.definition })
       state.pendingTask = ''
       state.lastDecision = { ...decision, selectedId: selected }
       return { ok: true, started: true, decision: state.lastDecision, status,
@@ -146,7 +148,7 @@ export class PlaybookRouter {
   guard(id, toolName) {
     if (!this.view(id).pending || this.engine.attachedRun(id)) return undefined
     // run_code is a transport; nested native calls re-enter this same guard.
-    if (['playbook', 'run_code', 'ask_user_question', 'AskUserQuestion'].includes(toolName)) return undefined
-    return '请先调用 playbook(action="route") 自动选择 SOP；流程未确定前不执行工作工具。仅缺关键需求时询问用户。'
+    if (INTAKE_READ_TOOLS.has(toolName) || ['playbook', 'run_code', 'ask_user_question', 'AskUserQuestion'].includes(toolName)) return undefined
+    return '先读取任务书并用 intake 识别项目，再 route 选择 SOP。待选流允许 read/grep/glob 等只读发现，不允许提前写入或执行制作。'
   }
 }
