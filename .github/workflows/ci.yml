@@ -55,3 +55,4 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: python3 --version && ffmpeg -version && ffprobe -version
       - run: npm run mediatest
+      - run: node scripts/isolation-smoke.mjs

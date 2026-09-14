@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- Allocate engine-owned per-run media artifact roots without changing project/session cwd.
+- Prepare directories only through the guarded Host tool pipeline; reject adoption of foreign directories.
+- Check actual run ownership, paths, links, marker and supplementary timestamps.
+- Reject known byte-identical prior finals, including simultaneous candidate commits; support human workspace hash exclusions.
+- Add validation-time lineage to system reports, explicitly not a generation attestation or OS sandbox.
+- Preserve project SOPs and same-run revision budgets; legacy media runs require a deliberate fresh run.
+
 ## 0.5.0
 
 - Read-first project intake for video and referenced-document tasks; permit read-only discovery before routing.

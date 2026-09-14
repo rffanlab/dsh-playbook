@@ -6,7 +6,8 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { BUILTIN_PLAYBOOKS } from './builtins.js'
 import { loadPlaybooksFromDirectory } from './catalog.js'
-import { PlaybookEngine } from './engine.js'
+import { IsolatedPlaybookEngine as PlaybookEngine } from './run-isolation.js'
+import { createIsolationManager } from './host-isolation.js'
 import { PlaybookRouter } from './routing.js'
 import { installAutoRouting } from './automation.js'
 import { playbookDefinition, conciseStatus } from './tool.js'
@@ -47,7 +48,9 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   })()
   const ready = async () => { await initialized; if (startupError) throw new Error(`playbook state unavailable: ${startupError.message}`) }
   const pendingWrites = new Map()
-  ctx.tools.register(define(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx), createReportExporter(ctx, engine, pendingWrites), projects)))
+  const isolation = createIsolationManager(ctx, engine)
+  ctx.tools.guard(isolation.guard)
+  ctx.tools.register(define(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects))))
   const basePolicy = [
     'Playbook execution policy:',
     '- For a NEW actionable task with automatic routing enabled, select a SOP before work: call playbook action=route. Ordinary explanations/chat need no SOP.',
@@ -73,9 +76,10 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     const enabled = router.view(id).enabled
     return `${basePolicy}\nAutomatic routing: ${enabled ? 'on' : 'off; do not start a SOP unless explicitly requested'}\n${enabled ? engine.listPlaybooks().map(p => `${p.id}: ${p.name}`).join('\n') : ''}`
   } })
-  ctx.tools.guard(exec => isReportWrite(exec, pendingWrites) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
+  ctx.tools.guard(exec => (isReportWrite(exec, pendingWrites) || isolation.isPreparation(exec)) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
   const callScopes = new Map()
   ctx.on('tools/pre-execute', (exec, next) => {
+    engine.noteCaller(exec)
     const run = exec.agent?.id ? engine.activeRun(String(exec.agent.id)) : undefined
     if (run && exec.name !== PLAYBOOK_TOOL_NAME) callScopes.set(exec.token ?? exec, { runId: run.id, stageId: run.stageId, attempt: run.stageAttempt, epoch: run.stageEpoch ?? 0 })
     return next()
@@ -88,7 +92,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     void engine.observeTool(String(exec.agent.id), { ...scope, name: exec.name, callId: exec.callId, isError: result.isError, receipt: toolReceipt(exec, result) })
       .catch(error => console.error(`[dsh-playbook] observation failed: ${error?.message ?? error}`))
   })
-  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear() }, 'dsh-playbook transient routing and call scopes')
+  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
   installAutoRouting(ctx, engine, router, { ready, createMessage: message })
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({
@@ -96,6 +100,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
       input: { hint: '[project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|accept|cancel|reload]' },
       handler: async invocation => {
         try {
+          engine.noteCaller(invocation)
           const [op = 'status', ...rest] = (invocation.rawInput?.trim() ?? '').split(/\s+/).filter(Boolean)
           const sessionId = invocation.agent?.id ?? invocation.session?.id
           const success = value => ({ kind: 'success', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) })
@@ -108,6 +113,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
           }
           await ready()
           if (op === 'reload') return success(await reloadCatalog())
+          if (op === 'exclude-hash') return success(await engine.excludeHash(invocation, rest[0], rest.slice(1).join(' ') || undefined))
           if (op === 'project') return success(rest[0] === 'use' ? await projects.bindHuman(invocation, rest[1]) : projects.view(invocation))
           if (op === 'sops') return success(projects.list(invocation))
           if (op === 'sop') return success(projects.inspect(invocation, rest[0], rest[1]))

@@ -39,3 +39,18 @@ for (const args of [
 ]) { const v=await t2.execute(args,x2); assert.deepEqual(v,JSON.parse(JSON.stringify(v))); assert.ok(t2.output.render(args,v)[0].text) }
 assert.equal(e2.status('project-sdk').input.sop.status,'trial')
 console.log('Project intake/save/route with real DSH defineTool passed; not a live Agent or browser test.')
+
+// The actual installed SDK must accept the new workspace controller and canonical output.
+const { IsolatedPlaybookEngine } = await import('../src/run-isolation.js')
+const { createIsolationManager } = await import('../src/host-isolation.js')
+const isolated = new IsolatedPlaybookEngine(); for (const p of BUILTIN_PLAYBOOKS) isolated.register(p)
+const ir = new PlaybookRouter(isolated), im = createIsolationManager({tools:{}}, isolated)
+const it = defineTool(im.wrap(playbookDefinition(isolated,async()=>[],ir)))
+assert.ok(it.parameters.properties.action.enum.includes('workspace'))
+const ix = {agent:{id:'isolated-sdk',session:{header:{cwd:'/workspace/sdk-isolated'}}},signal:new AbortController().signal}
+// No token: this is a schema/unit fixture, not an actual directory preparation.
+const iv = await it.execute({action:'start',playbook_id:'bilibili-video-production'},ix)
+assert.deepEqual(iv,JSON.parse(JSON.stringify(iv)))
+assert.equal(iv.status.isolation.prepared,false)
+assert.ok(iv.status.isolation.root.includes('.dsh-runs'))
+console.log('Run-isolation control schema and pending allocation canonical output passed; no live workspace/model claimed.')

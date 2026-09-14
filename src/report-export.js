@@ -9,7 +9,7 @@ export function createReportExporter(ctx, engine, pendingWrites) {
     const id = String(exec.agent?.id ?? ''), report = engine.report(id)
     const videoPath = report.candidates?.at(-1)?.artifacts?.video?.binding?.path
     if (!videoPath || !exec.token || !exec.agent) throw new Error('Export needs a validated candidate and a live Host context; action=report is still available')
-    const content = reportMarkdown(report), suffix = randomUUID()
+    const content = reportMarkdown(report) + (report.isolation ? '\n## Artifact isolation / 产物归属\n\n```json\n' + JSON.stringify({ isolation: report.isolation, artifactLineage: report.artifactLineage, provenanceLimit: report.provenanceLimit }, null, 2) + '\n```\n' : ''), suffix = randomUUID()
     const path = join(dirname(videoPath), `execution-report.system.r${report.run.revision}.${suffix.slice(0, 8)}.md`)
     const callId = `${exec.callId}:playbook-report:${suffix}`
     const args = { file_path: path, content }

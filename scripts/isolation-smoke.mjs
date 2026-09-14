@@ -1,0 +1,57 @@
+/** Simulated Host dispatch with REAL Python commands; no model or deployed DSH profile. */
+import assert from 'node:assert/strict'
+import { mkdtemp, rm, writeFile, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { install } from '../src/host.js'
+const exec = promisify(execFile), workspace = await mkdtemp(join(tmpdir(),'dsh-owned-root-'))
+const handlers = new Map(), guards = [], definitions = new Map(), commands = new Map()
+let count=0
+const ctx = {
+  tools: { register: d=>definitions.set(d.name,d), guard:f=>guards.push(f), execute:async input=>{
+    const call={...input,token:Symbol(),rootCallId:input.rootCallId??input.callId,deferContext:()=>{}}
+    await handlers.get('tools/pre-execute')?.(call,async()=>({kind:'allow'}))
+    const denial=guards.map(g=>g(call)).find(Boolean)
+    let result
+    if(denial) result={isError:true,message:denial}
+    else if(input.name==='bash') {
+      try {
+        const output=await exec('bash',['-c',input.arguments.command],{cwd:input.arguments.workdir??workspace,timeout:30000,maxBuffer:2**20,signal:input.signal})
+        result={isError:false,value:{kind:'foreground',exitCode:0,signal:null,aborted:false,timedOut:false,stdout:{text:output.stdout,truncated:false},stderr:{text:output.stderr,truncated:false}}}
+      }catch(error){result={isError:true,message:error.message}}
+    } else result={isError:false,value:await definitions.get(input.name).execute(input.arguments,call)}
+    handlers.get('tools/result')?.(call,result)
+    return result
+  }},
+  systemPrompt:{section:()=>{}},commands:{register:c=>commands.set(c.name,c)},
+  on:(event,f)=>handlers.set(event,f),effect:()=>{},inject:(_deps,f)=>f(ctx),provide:()=>{}
+}
+const engine=install(ctx,{define:d=>d,message:p=>({id:'notice',...p}),paths:{directory:join(workspace,'catalog'),state:join(workspace,'state.json')}})
+const agent=id=>({id,session:{header:{cwd:workspace}},options:{provider:'fixture',model:'no-model-executed'}})
+const signal=new AbortController().signal,a=agent('a'),b=agent('b')
+const call=async(agent,args)=>{
+  const r=await ctx.tools.execute({name:'playbook',callId:`call-${++count}`,agent,signal,arguments:args})
+  assert.equal(r.isError,false,r.message);return r.value
+}
+try {
+  await call(a,{action:'list'}) // wait for state hydration
+  engine.register({id:'owned-media-fixture',stages:[{id:'script',objective:'Read an actual local script',gate:{evidence:[{key:'production_manifest',type:'string'}],validators:[{kind:'narration',pathKey:'production_manifest'}]},retry:{maxAttempts:2},next:null}]})
+  for(const item of [a,b]){
+    const c=await commands.get('playbook').handler({agent:item,signal,rawInput:'start owned-media-fixture'})
+    assert.equal(c.kind,'success',c.text)
+    await call(item,{action:'workspace'})
+  }
+  const rootA=engine.status('a').isolation.realRoot,rootB=engine.status('b').isolation.realRoot
+  assert.notEqual(rootA,rootB);assert.equal(a.session.header.cwd,workspace)
+  assert.ok((await stat(join(rootA,'final'))).isDirectory())
+  await writeFile(join(rootA,'brief/narration.txt'),'Real complete script.')
+  await writeFile(join(rootA,'production.json'),JSON.stringify({schemaVersion:1,script:'brief/narration.txt',segments:[{id:'s',text:'Real complete script.'}]}))
+  const passed=await call(a,{action:'submit',stage_id:'script',evidence:{production_manifest:join(rootA,'production.json')}})
+  assert.equal(passed.gatePassed,true,JSON.stringify(passed))
+  const rejected=await call(b,{action:'submit',stage_id:'script',evidence:{production_manifest:join(rootA,'production.json')}})
+  assert.equal(rejected.gatePassed,false)
+  assert.match(rejected.gate.failures.join(' '),/CROSS_RUN_PATH/)
+  console.log('Real Python bootstrap + current-root validator + cross-run rejection passed through simulated Host dispatch. No deployed DSH/model claim.')
+} finally {await engine.queue;await rm(workspace,{recursive:true,force:true})}

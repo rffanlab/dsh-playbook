@@ -4,15 +4,15 @@ import { createHash, randomUUID } from 'node:crypto'
 const program = readFileSync(new URL('./media_worker.py', import.meta.url), 'utf8')
 export const MEDIA_WORKER_SHA256 = createHash('sha256').update(program).digest('hex')
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`
-export function validatorCommand(kind, manifest) {
-  if (!['narration', 'pilot', 'video', 'handoff'].includes(kind)) throw new Error('unsupported validator kind')
-  if (typeof manifest !== 'string' || !manifest.trim() || manifest.length > 4096 || manifest.includes('\0')) throw new Error('manifest requires a bounded path')
-  const payload = Buffer.from(JSON.stringify({ kind, manifest }), 'utf8').toString('base64')
+export function validatorCommand(kind, manifest, isolation) {
+  if (!['prepare', 'narration', 'pilot', 'video', 'handoff'].includes(kind)) throw new Error('unsupported validator kind')
+  if (kind !== 'prepare' && (typeof manifest !== 'string' || !manifest.trim() || manifest.length > 4096 || manifest.includes('\0'))) throw new Error('manifest requires a bounded path')
+  const payload = Buffer.from(JSON.stringify({ kind, manifest, ...(isolation ? { isolation } : {}) }), 'utf8').toString('base64')
   return `python3 -I -c ${quote(program)} ${quote(payload)}`
 }
 
 /** All work passes through the same agent, guards, sandbox and cancellation tree. */
-export function createMediaRunner(ctx) {
+export function createMediaRunner(ctx, engine) {
   return async (rules, evidence, exec) => {
     if (!rules?.length) return []
     const results = []
@@ -25,12 +25,21 @@ export function createMediaRunner(ctx) {
         continue
       }
       let command
-      try { command = validatorCommand(rule.kind, evidence[rule.pathKey]) }
+      let isolation
+      try {
+        engine?.noteCaller(exec)
+        if (engine) {
+          await engine.queue
+          isolation = engine.status(String(exec.agent.id)).isolation
+          if (!isolation?.prepared) throw new Error('No prepared run-owned artifact root; legacy runs require a fresh task, not adoption of old outputs')
+        }
+        command = validatorCommand(rule.kind, evidence[rule.pathKey], isolation)
+      }
       catch (error) { results.push(unavailable(error.message)); continue }
       const callId = `${exec.callId}:playbook-validator:${randomUUID()}`
       const output = await ctx.tools.execute({ callId, rootCallId: exec.rootCallId ?? exec.callId,
         parent: exec.token, name: 'bash', agent: exec.agent, signal: exec.signal,
-        arguments: { command, description: `Validate ${rule.kind} artifact content and hashes`, timeoutMs: 120000 } })
+        arguments: { command, ...(isolation ? { workdir: isolation.realRoot } : {}), description: `Validate ${rule.kind} artifact content and hashes`, timeoutMs: 120000 } })
       for (const context of output.additionalContexts ?? []) exec.deferContext?.(context)
       exec.signal?.throwIfAborted()
       const v = output.value

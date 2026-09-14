@@ -53,22 +53,94 @@ def json_hash(value):
     return text_hash(json.dumps(value, ensure_ascii=False, separators=(',', ':')))
 
 
+def prepare_workspace(isolation):
+    require(isinstance(isolation, dict) and isolation.get('protocol') == 1, 'Missing Host isolation contract')
+    key = isolation.get('key')
+    require(isinstance(key, str) and re.fullmatch(r'[a-f0-9-]{36}', key), 'Invalid allocated workspace key')
+    workspace = Path(isolation['workspace']).resolve(strict=True)
+    require(Path.cwd().resolve() == workspace, 'Preparation cwd must be the Host session workspace')
+    require(Path(isolation['root']) == Path(isolation['workspace']) / '.dsh-runs' / key, 'Invalid run root allocation')
+    require(isinstance(isolation.get('runId'), str) and 0 < len(isolation['runId']) < 1024, 'Invalid run identity')
+    parent = workspace / '.dsh-runs'
+    try:
+        parent.mkdir(mode=0o700)
+    except FileExistsError:
+        require(parent.is_dir() and not parent.is_symlink(), 'Managed runs parent is not a real directory')
+    root = parent / key
+    created = False
+    try:
+        root.mkdir(mode=0o700)
+        created = True
+    except FileExistsError:
+        require(root.is_dir() and not root.is_symlink(), 'Allocated run root is not a real directory')
+    marker = root / '.dsh-run.json'
+    identity = {'protocol': 1, 'key': key, 'runId': isolation['runId'], 'sessionId': isolation['sessionId']}
+    if created:
+        data = {**identity, 'createdAtMs': time.time_ns() // 1000000}
+        with marker.open('x', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+    else:
+        # Only an earlier successful preparation of this exact allocation is resumable.
+        require(marker.is_file() and not marker.is_symlink() and marker.stat().st_size < 4096,
+                'NONEMPTY_ROOT: refusing to adopt an existing or partially initialized output directory')
+        data = json.loads(marker.read_text(encoding='utf-8'))
+        require(all(data.get(k) == v for k, v in identity.items()), 'FOREIGN_RUN_MARKER: do not relabel an old workspace')
+    for name in ['brief', 'work', 'evidence', 'artifacts', 'final']:
+        directory = root / name
+        directory.mkdir(mode=0o700, exist_ok=True)
+        require(directory.is_dir() and not directory.is_symlink(), 'Run subdirectory cannot be a symlink')
+    return {**identity, 'root': str(root), 'createdAtMs': data['createdAtMs'],
+            'markerSha256': hashlib.sha256(marker.read_bytes()).hexdigest(), 'status': 'pass', 'failures': []}
+
+
 class Reader:
-    def __init__(self, root):
+    def __init__(self, root, isolation=None):
         self.root = Path(root).resolve(strict=True)
         self.bindings = {}
+        self.ownership = None
+        if isolation is not None:
+            require(isolation.get('protocol') == 1 and isolation.get('prepared') is True, 'RUN_NOT_PREPARED')
+            workspace = Path(isolation['workspace']).resolve(strict=True)
+            expected = workspace / '.dsh-runs' / isolation['key']
+            require(Path(isolation['root']) == Path(isolation['workspace']) / '.dsh-runs' / isolation['key'], 'Invalid run root')
+            require(not expected.parent.is_symlink() and not expected.is_symlink() and expected.is_dir(), 'Run root must not be a symlink')
+            require(self.root in [workspace, expected], 'Validator cwd is not this run or its Host workspace')
+            self.root = expected
+            marker = expected / '.dsh-run.json'
+            require(marker.is_file() and not marker.is_symlink() and marker.stat().st_size < 4096, 'Missing run ownership marker')
+            raw = marker.read_bytes()
+            require(hashlib.sha256(raw).hexdigest() == isolation.get('markerSha256'), 'RUN_MARKER_CHANGED: caller sidecars cannot replace Host ownership')
+            data = json.loads(raw)
+            require(all(data.get(k) == isolation.get(k) for k in ['runId', 'sessionId', 'key', 'createdAtMs']), 'RUN_MARKER_IDENTITY_MISMATCH')
+            require(str(expected) == isolation.get('realRoot'), 'Run canonical root changed')
+            self.ownership = {**data, 'root': str(expected), 'markerSha256': isolation['markerSha256']}
+
 
     def path(self, name, base=None):
         require(isinstance(name, str) and 0 < len(name) <= 4096 and '\x00' not in name,
                 'A non-empty local path is required')
         require(not re.match(r'^[a-z][a-z0-9+.-]*://', name, re.I), 'URLs are not local artifacts')
         p = Path(name)
+        if self.ownership:
+            require('..' not in p.parts, 'RUN_PATH_TRAVERSAL: use an absolute current-run path')
+            raw = p if p.is_absolute() else (base or self.root) / p
+            require(raw.is_relative_to(self.root), 'CROSS_RUN_PATH: artifact is outside the allocated current-run root')
+            current = self.root
+            for part in raw.relative_to(self.root).parts:
+                current = current / part
+                require(not current.is_symlink(), 'RUN_SYMLINK: symlink artifacts are not accepted as fresh output')
         try:
             p = (p if p.is_absolute() else (base or self.root) / p).resolve(strict=True)
         except FileNotFoundError as exc:
             raise Invalid('Missing artifact: ' + name) from exc
         require(p.is_relative_to(self.root), 'Artifact escapes the session workspace (including symlinks)')
         require(p.is_file(), 'Artifact must be a regular file')
+        if self.ownership:
+            require(p.stat().st_nlink == 1, 'RUN_HARDLINK: linked old artifacts are not independent output')
+            require(p.stat().st_mtime_ns // 1000000 >= self.ownership['createdAtMs'] - 2000,
+                    'ARTIFACT_PREDATES_RUN: preserved old modification time; timestamps alone never establish origin')
         require(0 < p.stat().st_size <= MAX_FILE, 'Artifact is empty or exceeds the 512 MiB limit')
         return p
 
@@ -82,6 +154,9 @@ class Reader:
         require((before.st_size, before.st_mtime_ns, before.st_ino) ==
                 (after.st_size, after.st_mtime_ns, after.st_ino), 'Artifact changed while hashing')
         value = {'path': str(p), 'sha256': h.hexdigest(), 'bytes': before.st_size}
+        if self.ownership:
+            value.update({'mtimeNs': str(before.st_mtime_ns), 'ctimeNs': str(before.st_ctime_ns),
+                          'runId': self.ownership['runId']})
         self.bindings[str(p)] = value
         return value
 
@@ -248,8 +323,12 @@ def validate(request, root=None):
     result = {'validatorVersion': VERSION, 'kind': request.get('kind'), 'passed': False,
               'status': 'fail', 'failures': [], 'bindings': {}, 'policy': POLICY.copy(),
               'semanticVerification': False, 'speechRecognition': False}
-    reader = Reader(root or Path.cwd())
     try:
+        if request.get('kind') == 'prepare':
+            return prepare_workspace(request.get('isolation'))
+        reader = Reader(root or Path.cwd(), request.get('isolation'))
+        if reader.ownership:
+            result['ownership'] = reader.ownership
         kind = request['kind']
         require(kind in ['narration', 'pilot', 'video', 'handoff'], 'Unsupported validator kind')
         manifest_path, manifest_text = reader.text(request['manifest'])
@@ -326,7 +405,7 @@ def validate(request, root=None):
 
 if __name__ == '__main__':
     try:
-        require(len(sys.argv) == 2 and len(sys.argv[1]) < 16000, 'One bounded base64 request is required')
+        require(len(sys.argv) == 2 and len(sys.argv[1]) < 32000, 'One bounded base64 request is required')
         req = json.loads(base64.b64decode(sys.argv[1], validate=True).decode('utf-8'))
         print(json.dumps(validate(req), ensure_ascii=False, allow_nan=False))
     except Exception as error:
