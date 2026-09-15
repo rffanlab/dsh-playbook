@@ -96,10 +96,11 @@ def prepare_workspace(isolation):
 
 
 class Reader:
-    def __init__(self, root, isolation=None):
+    def __init__(self, root, isolation=None, legacy_scope=None):
         self.root = Path(root).resolve(strict=True)
         self.bindings = {}
         self.ownership = None
+        self.legacy_scope = None
         if isolation is not None:
             require(isolation.get('protocol') == 1 and isolation.get('prepared') is True, 'RUN_NOT_PREPARED')
             workspace = Path(isolation['workspace']).resolve(strict=True)
@@ -116,6 +117,33 @@ class Reader:
             require(all(data.get(k) == isolation.get(k) for k in ['runId', 'sessionId', 'key', 'createdAtMs']), 'RUN_MARKER_IDENTITY_MISMATCH')
             require(str(expected) == isolation.get('realRoot'), 'Run canonical root changed')
             self.ownership = {**data, 'root': str(expected), 'markerSha256': isolation['markerSha256']}
+
+
+        if legacy_scope is not None:
+            require(isolation is None, 'Cannot mix fresh ownership and legacy continuation')
+            require(legacy_scope.get('mode') == 'legacy-same-run' and isinstance(legacy_scope.get('runId'), str), 'Invalid legacy continuation')
+            workspace = Path(legacy_scope['workspace']).resolve(strict=True)
+            require(self.root == workspace, 'Legacy continuation cwd must match the original Host workspace')
+            roots, files = legacy_scope.get('allowedRoots'), legacy_scope.get('allowedFiles')
+            require(isinstance(roots, list) and 1 <= len(roots) <= 16 and isinstance(files, list) and len(files) <= 512, 'Invalid legacy allowlist')
+            managed = workspace / '.dsh-runs'
+            for value in roots + files:
+                path = Path(value)
+                require(path.is_absolute() and path.is_relative_to(workspace) and not path.is_relative_to(managed), 'Legacy allowlist outside original scope')
+            self.legacy_scope = legacy_scope
+
+    def manifest(self, name):
+        # The public API historically accepted workspace-relative .dsh-runs paths.
+        # Resolve this notation once, not root/.dsh-runs/<same-key>/... .
+        if self.ownership and isinstance(name, str):
+            text = name
+            while text.startswith('./'):
+                text = text[2:]
+            if text.startswith('.dsh-runs/'):
+                key = self.ownership['key']
+                require(text.startswith('.dsh-runs/' + key + '/'), 'CROSS_RUN_PATH: manifest identifies a different run')
+                name = str(self.root.parent.parent / text)
+        return self.text(name)
 
 
     def path(self, name, base=None):
@@ -136,6 +164,18 @@ class Reader:
         except FileNotFoundError as exc:
             raise Invalid('Missing artifact: ' + name) from exc
         require(p.is_relative_to(self.root), 'Artifact escapes the session workspace (including symlinks)')
+        if self.legacy_scope:
+            scope = self.legacy_scope
+            require(not p.is_relative_to(self.root / '.dsh-runs'), 'CROSS_RUN_PATH: legacy revision cannot borrow managed-run artifacts')
+            require(any(p.is_relative_to(Path(r)) for r in scope['allowedRoots']) or str(p) in scope['allowedFiles'],
+                    'LEGACY_SCOPE: file is outside the same-run recorded source/manifest directories')
+            raw = Path(name) if Path(name).is_absolute() else (base or self.root) / name
+            current = self.root
+            require(raw.is_relative_to(self.root), 'LEGACY_SCOPE: path leaves original workspace')
+            for part in raw.relative_to(self.root).parts:
+                current = current / part
+                require(not current.is_symlink(), 'LEGACY_SYMLINK: cannot import another output through a link')
+            require(p.stat().st_nlink == 1, 'LEGACY_HARDLINK: explicit same-run files, not linked foreign outputs')
         require(p.is_file(), 'Artifact must be a regular file')
         if self.ownership:
             require(p.stat().st_nlink == 1, 'RUN_HARDLINK: linked old artifacts are not independent output')
@@ -406,7 +446,9 @@ def validate(request, root=None):
     try:
         if request.get('kind') == 'prepare':
             return prepare_workspace(request.get('isolation'))
-        reader = Reader(root or Path.cwd(), request.get('isolation'))
+        reader = Reader(root or Path.cwd(), request.get('isolation'), request.get('legacyScope'))
+        if reader.legacy_scope:
+            result['legacyContinuation'] = {k: reader.legacy_scope[k] for k in ['mode','runId','workspace','independentRun','creationAttested']}
         if reader.ownership:
             result['ownership'] = reader.ownership
         kind = request['kind']
@@ -417,7 +459,7 @@ def validate(request, root=None):
             reader.unchanged()
             result.update(bindings=reader.bindings, passed=not result['failures'], status='pass' if not result['failures'] else 'fail', notAGate=True)
             return result
-        manifest_path, manifest_text = reader.text(request['manifest'])
+        manifest_path, manifest_text = reader.manifest(request['manifest'])
         manifest = json.loads(manifest_text)
         require(manifest.get('schemaVersion') == 1, 'Manifest requires schemaVersion=1')
         base = manifest_path.parent

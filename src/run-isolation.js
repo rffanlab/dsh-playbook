@@ -126,6 +126,22 @@ export class IsolatedPlaybookEngine extends PlaybookEngine {
     const run = this.runs.get(String(sessionId)), own = run?.isolation
     let checks = options.runtimeChecks
     if (own && !own.prepared) throw new Error('WORKSPACE_NOT_PREPARED: call playbook action=workspace before stage submission')
+    if (!own && run?.legacyContinuation && checks?.length) {
+      const scope = run.legacyContinuation, known = this.knownOutputs(run.id)
+      checks = checks.map(raw => {
+        const check = clone(raw), failures = []
+        if (check.status === 'unavailable') return check
+        if (check.legacyContinuation?.runId !== run.id || check.legacyContinuation?.workspace !== scope.workspace)
+          failures.push('LEGACY_SCOPE_MISMATCH: continuation scope comes from the retained run, never model claims')
+        for (const file of Object.values(check.bindings ?? {}))
+          if (!scope.allowedRoots.some(root => inside(root,file.path)) && !scope.allowedFiles.includes(file.path)) failures.push('LEGACY_SCOPE_MISMATCH: artifact outside recorded same-run locations')
+        if (['video','handoff'].includes(check.kind) && known.some(file => file.sha256 === check.video?.binding?.sha256))
+          failures.push('CROSS_RUN_DUPLICATE: legacy repair cannot borrow another retained run final')
+        if (failures.length) { check.passed=false;check.status='fail';check.failures=[...(check.failures??[]),...failures] }
+        check.provenance={runId:run.id,sessionId:run.sessionId,revision:run.revision??0,mode:'legacy-same-run',independentRun:false,creationAttested:false}
+        return check
+      })
+    }
     if (own && checks?.length) {
       const known = this.knownOutputs(run.id), exclusions = this.sopLibrary.outputExclusions?.[scopeKey(own.workspace)] ?? []
       checks = checks.map(raw => {
@@ -155,7 +171,7 @@ export class IsolatedPlaybookEngine extends PlaybookEngine {
   }
   report(sessionId) {
     const report = super.report(sessionId), run = this.runs.get(String(sessionId))
-    if (!run?.isolation) return { ...report, artifactIsolation: 'legacy-or-non-media: no independent-run guarantee' }
+    if (!run?.isolation) return { ...report, legacyContinuation: clone(run?.legacyContinuation ?? null), artifactIsolation: 'legacy-or-non-media: no independent-run guarantee' }
     const artifacts = Object.entries(run.machineEvidence ?? {}).flatMap(([stage, checks]) => checks.flatMap(check =>
       Object.values(check.bindings ?? {}).map(binding => ({ ...binding, ...check.provenance, verifiedInStage: stage }))))
     return { ...report, isolation: clone(run.isolation), artifactLineage: artifacts,

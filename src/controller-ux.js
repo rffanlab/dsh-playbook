@@ -24,9 +24,9 @@ export function compactStatus(s) {
   if (!s?.run) return s
   const manifests = Object.entries(s.evidence ?? {}).filter(([,e]) => e?.production_manifest)
   return {
-    active: s.active, attached: s.attached, run: s.run, blocker: s.blocker, isolation: s.isolation,
+    active: s.active, attached: s.attached, run: s.run, blocker: s.blocker, isolation: s.isolation, legacyContinuation:s.legacyContinuation, runtimeRecovery:s.runtimeRecovery,
     stage: s.stage ? {id:s.stage.id,title:s.stage.title,mode:s.stage.mode,objective:s.stage.objective,gate:s.stage.gate,tools:s.stage.tools,retry:s.stage.retry,next:s.stage.next} : null,
-    instruction: s.stage?.instructions?.join('\n') ?? s.instruction, lastGate: s.lastGate, recovery: s.recovery, activity: s.activity,
+    instruction: s.runtimeRecovery ? s.runtimeRecovery.message + '\n' + (s.stage?.instructions?.join('\n') ?? '') : s.stage?.instructions?.join('\n') ?? s.instruction, lastGate: s.lastGate, recovery: s.recovery, activity: s.activity,
     currentManifest: manifests.at(-1)?.[1].production_manifest ?? null,
     input: s.input ? {project:s.input.project,sop:s.input.sop} : undefined,
     acceptedEvidenceKeys: Object.keys(s.evidence ?? {}),
@@ -41,7 +41,7 @@ export function compactStatus(s) {
 }
 function compactValidation(rows) {
   return rows?.map(c => ({ kind:c.kind, status:c.status, passed:c.passed, failures:c.failures,
-    warnings:c.warnings, coverage:c.coverage, cache:c.cache, callId:c.callId,
+    warnings:c.warnings, pathResolution:c.pathResolution, coverage:c.coverage, cache:c.cache, callId:c.callId,
     video: c.video ? {path:c.video.binding?.path,sha256:c.video.binding?.sha256,durationSeconds:c.video.durationSeconds,
       audio:c.video.audio} : undefined,
     timing:c.timing, semanticVerification:c.semanticVerification, speechRecognition:c.speechRecognition }))
@@ -76,7 +76,14 @@ export function usableController(definition, engine, { diagnose } = {}) {
           current_stage_id:status.run?.stageId,current_state:status.run?.state,required_evidence:status.stage?.gate?.evidence,
           recovery:status.lastGate?.recovery,expected:{action:'submit',stage_id:status.run?.stageId,evidence:'<actual evidence matching the listed fields>'}})
       }
-      const out = await definition.execute(args, exec)
+      let out
+      try { out = await definition.execute(args, exec) }
+      catch (error) {
+        if (error.code !== 'SOURCE_READ_REFS') throw error
+        return {ok:false,error:{code:error.code,message:error.message},availableReads:error.availableReads,
+          nextAction:'retry_intake_with_observed_source_paths',expected:{action:'intake',project_id:args.project_id,requirements:args.requirements,source_paths:['<choose a task-source path from availableReads>']},
+          message:'Use only actual current-session source paths/receipts. This is an Agent input correction, not a user cleanup task; no run was started or cleared.'}
+      }
       const advisories = mediaWarnings(out.validation, engine.runs.get(id)?.previousCandidate)
       if (advisories.length) out.advisories = advisories
       if (args.detail === 'full') return copy({...out,...(corrections.length?{argumentCorrections:corrections}:{})})
@@ -85,6 +92,8 @@ export function usableController(definition, engine, { diagnose } = {}) {
       if (result.validation) result.validation = compactValidation(result.validation)
       if (result.message?.includes('\n')) result.message = result.message.split('\n')[0] // stage is already in status
       if (result.status?.lastGate?.recovery) result.nextAction = result.status.lastGate.recovery.exhausted ? 'report_recovery_limit' : 'fix_indicated_dependency'
+      if (result.status?.runtimeRecovery) result.nextAction = 'recover'
+      if (result.recovered) result.nextAction = 'execute_current_stage'
       if (result.report) {
         const r=result.report
         result.report={run:r.run,summary:r.summary,recovery:r.lastGate?.recovery,blocker:r.blocker,

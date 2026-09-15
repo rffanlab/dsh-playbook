@@ -1,3 +1,4 @@
+import { createRuntimeRecovery } from './runtime-recovery.js'
 import { ProjectLibrary } from './project-library.js'
 import { createReportExporter, isReportWrite } from './report-export.js'
 import { createMediaRunner } from './host-media.js'
@@ -53,7 +54,8 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   const isolation = createIsolationManager(ctx, engine)
   const diagnostics = createMediaDiagnostics(ctx, engine)
   ctx.tools.guard(isolation.guard)
-  ctx.tools.register(define(usableController(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects)), engine, diagnostics)))
+  const recovery = createRuntimeRecovery(ctx, engine, ready)
+  ctx.tools.register(define(usableController(recovery.wrap(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects))), engine, diagnostics)))
   const basePolicy = [
     'Playbook execution policy:',
     '- For a NEW actionable task with automatic routing enabled, select a SOP before work: call playbook action=route. Ordinary explanations/chat need no SOP.',
@@ -67,6 +69,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     '- Obey the current stage. Submit stage_id and complete evidence through action=submit; only the engine advances stages.',
     '- Correct failed gates within the budget. Do not cancel to bypass a gate, invent evidence, or turn missing capabilities into fabricated results.',
     '- Prefer actual work then one submit; check is an optional format-only preflight, not a mandatory extra form. The narrow {item:[...]} mistake is corrected transparently. Never pad evidence with fake observations.',
+    '- Plugin path/legacy incidents: automatically use recover/workspace/repair and keep the same run. Never request clearing state, cancellation, a new conversation or weaker validators as the default workaround. Intake source_paths resolves real observed reads; do not invent call IDs.',
     '- Technical/format failure: use action=repair with a specific earlier stage and concrete diagnosis within the preserved budget. Missing resources/permission: block and ask. Never cancel/start or work informally to evade a failed SOP.',
     '- Fixed timeline lengths, all-new covers, ASR absence and cosmetic imperfections are not reasons for blind rerendering. Dialogue audio drives video timing; quote overlays and shot cuts need not last as long as speech segments. Diagnose before deciding what to repair.',
     '- Media candidates are not user acceptance. User rejection reopens the same run. Only an explicit direct-user approval can set accepted. Report facts come from action=report, never a prewritten success story.',
@@ -80,7 +83,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     const enabled = router.view(id).enabled
     return `${basePolicy}\nAutomatic routing: ${enabled ? 'on' : 'off; do not start a SOP unless explicitly requested'}\n${enabled ? engine.listPlaybooks().map(p => `${p.id}: ${p.name}`).join('\n') : ''}`
   } })
-  ctx.tools.guard(exec => (isReportWrite(exec, pendingWrites) || isolation.isPreparation(exec) || diagnostics.allows(exec)) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
+  ctx.tools.guard(exec => (isReportWrite(exec, pendingWrites) || isolation.isPreparation(exec) || diagnostics.allows(exec) || recovery.allows(exec)) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
   const callScopes = new Map()
   ctx.on('tools/pre-execute', (exec, next) => {
     engine.noteCaller(exec)
@@ -96,7 +99,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     void engine.observeTool(String(exec.agent.id), { ...scope, name: exec.name, callId: exec.callId, isError: result.isError, receipt: toolReceipt(exec, result) })
       .catch(error => console.error(`[dsh-playbook] observation failed: ${error?.message ?? error}`))
   })
-  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
+  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); recovery.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
   installAutoRouting(ctx, engine, router, { ready, createMessage: message })
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({

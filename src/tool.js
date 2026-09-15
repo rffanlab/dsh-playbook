@@ -92,7 +92,8 @@ export function playbookDefinition(engine, reloadCatalog, router, ready = async 
     parameters: {
       action: { type: 'string', required: true, enum: ['intake_status', 'intake', 'sop_list', 'sop_inspect', 'sop_validate', 'sop_save', 'list', 'inspect', 'recommend', 'route', 'start', 'status', 'check', 'submit', 'block', 'repair', 'report', 'export_report', 'reload', 'cancel'] },
       project_id: { type: 'string', description: 'Business project ID under Host session cwd (e.g. taoist-culture or bilibili-ai); chosen by Agent during intake, never a filesystem path.' },
-      source_call_ids: { type: 'array', items: { type: 'string' }, description: 'Actual read-tool call IDs covering task documents; see intake_status.' },
+      source_call_ids: { type: 'array', items: { type: 'string' }, description: 'Actual read-tool call IDs covering task documents; see intake_status. Prefer source_paths to avoid copying opaque IDs.' },
+      source_paths: { type: 'array', items: { type: 'string' }, description: 'Actual task-source paths already read by this Agent. Resolves observed receipt IDs automatically; no file reads, no assumed coverage. Use instead of source_call_ids.' },
       requirements: { type: 'array', items: { type: 'string' }, description: 'This task requirements extracted from the original user request/read documents. Persisted with the run, not mutable while running.' },
       sop_id: { type: 'string', description: 'Project-local SOP ID for creation/inspection or routing a saved version.' },
       sop_revision: { type: 'string', description: 'Exact immutable saved revision; default is approved version or latest trial.' },

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { isAbsolute, normalize } from 'node:path'
+import { isAbsolute, normalize, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { normalizePlaybook } from './core.js'
 
@@ -89,7 +89,11 @@ export class ProjectLibrary {
   }
   sourceRows(sid, refs) {
     if (!Array.isArray(refs) || refs.length > 64) throw new Error('source_call_ids must be an array of <=64 observed read IDs')
-    const rows = refs.map(ref => { const r = this.receipts.get(sid)?.get(ref); if (!r) throw new Error(`No observed read receipt ${ref}; read the actual task document first`); return clone(r) })
+    const rows = refs.map(ref => {
+      const r = this.receipts.get(sid)?.get(ref)
+      if (!r) { const e = new Error(`No observed read receipt ${ref}. Choose an actual current read path; do not invent or replay stale IDs.`); e.code='SOURCE_READ_REFS'; e.availableReads=this.readOptions(sid); throw e }
+      return clone(r)
+    })
     for (const path of new Set(rows.map(r => r.path))) {
       const windows = rows.filter(r => r.path === path).sort((a,b) => a.start-b.start)
       let end = 0
@@ -98,13 +102,29 @@ export class ProjectLibrary {
     }
     return rows
   }
+  readOptions(sid) {
+    return [...(this.receipts.get(sid)?.values() ?? [])].map(({callId,path,start,end,totalLines}) => ({callId,path,start,end,totalLines}))
+  }
+  refsForPaths(sid, paths, workspace) {
+    if (!Array.isArray(paths) || paths.length > 16) throw new Error('source_paths must contain at most 16 actual read paths')
+    const reads = [...(this.receipts.get(sid)?.values() ?? [])], refs=[]
+    for (const p of paths) {
+      string(p,'source_paths[]',4096)
+      const absolute = resolve(workspace,p), found = reads.filter(r => resolve(workspace,r.path) === absolute)
+      if (!found.length) { const e = new Error(`No current read for source path ${p}; read it first.`); e.code='SOURCE_READ_REFS'; e.availableReads=this.readOptions(sid); throw e }
+      refs.push(...found.map(r=>r.callId))
+    }
+    return [...new Set(refs)]
+  }
   async intake(exec, args) {
     const scope = this.scope(exec, args.project_id)
     const bound = own(this.engine.sopLibrary.bindings, scope.sessionId)
     if (bound?.workspace === scope.workspace && bound.projectId !== scope.projectId) throw new Error('This session is bound to project ' + bound.projectId + '; only an explicit user /playbook project use may switch it')
     if (this.engine.attachedRun(scope.sessionId) || this.engine.status(scope.sessionId).run?.state === 'failed') throw new Error('Cannot rebind/rewrite an active, failed or pending-review task; use repair or an explicit user new-task decision')
     const raw = string(this.router.session(scope.sessionId).pendingTask || args.task, 'original task', 24000)
-    const rows = this.sourceRows(scope.sessionId, args.source_call_ids ?? [])
+    const refs = args.source_paths ? this.refsForPaths(scope.sessionId,args.source_paths,scope.workspace) : args.source_call_ids ?? []
+    if (args.source_paths && args.source_call_ids?.length) throw new Error('Provide either source_paths or source_call_ids, not conflicting reference modes')
+    const rows = this.sourceRows(scope.sessionId, refs)
     if ((this.sourcesRequired.has(scope.sessionId) || mentionsSource(raw)) && !rows.length) throw new Error('Referenced task sources must be read before intake; pass observed source_call_ids, not a claim that they were read')
     const requirements = strings(args.requirements, 'requirements')
     const text = [raw, ...rows.map(r => r.text)].join('\n')

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1
+
+- Resolve absolute, session-prefixed and run-relative manifest paths once; retain cross-run/traversal rejection.
+- Probe and recover recorded plugin path/legacy-upgrade incidents in the original run without clearing files, history or budgets.
+- Keep legacy user-requested revisions explicitly non-independent; no relabelling old bytes as a new experiment.
+- Resolve actual intake source_paths to read receipts; provide useful choices for invalid IDs without weakening coverage.
+- Add real-file and Host/Python regression coverage; approved SOP definitions remain pinned.
+
 ## 0.7.0
 
 - Recognize long direct-user revision reviews without treating embedded examples as authorizations.

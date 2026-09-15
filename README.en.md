@@ -4,6 +4,12 @@
 
 **Give a task, read its sources, choose a project SOP, execute through evidence gates.**
 
+## 0.7.1: continue without clearing a run
+
+Fixes duplicated manifest path bases and adds narrowly verified same-run incident recovery without resetting history or budgets. Recorded pre-isolation revisions have an explicit compatibility path. Intake can resolve actual source_paths instead of copied opaque call IDs. Approved methods and quality gates remain unchanged.
+
+[Runtime recovery and compatibility](docs/RUNTIME-RECOVERY.en.md)
+
 ## 0.7.0: less paperwork, targeted repair, unchanged quality requirements
 
 Recognize long user reviews and direct rejection phrases; accept repair aliases; return stale narration directly to script rather than cycling producer/QA. Compact status by default, ASS narration-style support, display-punctuation normalization and guarded read-only media diagnostics. Handoff rehashes unchanged artifacts instead of decoding everything again; generic covers no longer need meaningless byte edits. Keep pilots to one natural segment and final duration driven by audio, not fixed overlay lengths.
@@ -24,7 +30,7 @@ Back up the actual playbook-state.json. Use the original service account, DSH_HO
 dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 ```
 
-Restart the service, refresh the browser and open a fresh conversation. Give the task directly; no hand-written SOP JSON is required. Old unisolated runs are not silently copied or relabelled as new independent experiments.
+Restart the service and refresh the browser. Start new tasks in a fresh conversation; continue affected path/compatibility incidents in their existing session without cancelling solely to upgrade. No hand-written SOP JSON is required. Old outputs are not silently copied or relabelled as new independent experiments.
 
 Read sources → identify project → reuse/draft SOP → pin version → execute → verify → bounded repair → candidate → user review.
 

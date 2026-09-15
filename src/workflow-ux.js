@@ -1,3 +1,4 @@
+import { runtimeRecoveryPlan } from './runtime-recovery.js'
 import { IsolatedPlaybookEngine } from './run-isolation.js'
 import { invalidate } from './run-control.js'
 import { toolPolicyDecision } from './core.js'
@@ -61,6 +62,11 @@ export class WorkflowEngine extends IsolatedPlaybookEngine {
   status(id) {
     const status = super.status(id), run = this.runs.get(String(id))
     if (!run) return status
+    const plan = runtimeRecoveryPlan(this, String(id))
+    status.runtimeRecovery = plan ? {code:plan.code,nextAction:'recover',message:plan.message} : null
+    status.legacyContinuation = run.legacyContinuation ? structuredClone(run.legacyContinuation) : null
+    if (plan && status.instruction) status.instruction = `PLUGIN INCIDENT: ${plan.message} Call playbook(action="recover") automatically before other work. No user clear/cancel is needed.\n${status.instruction}`
+    if (run.legacyContinuation && status.instruction) status.instruction = `LEGACY SAME-RUN CONTINUATION: ${run.legacyContinuation.allowedRoots.join(', ')}. Keep original identity; not an independent new-model experiment.\n${status.instruction}`
     const rows = Object.values(run.observations ?? {})
     const calls = rows.reduce((sum, row) => sum + (row.calls ?? 0), 0)
     status.activity = { stageToolCalls: calls, nonBlocking: true }
@@ -73,12 +79,15 @@ export class WorkflowEngine extends IsolatedPlaybookEngine {
     if (['awaiting_review','failed','blocked'].includes(state) &&
         ['present','present_file','present_files','read','read_image','grep','glob','job_output'].includes(name))
       return toolPolicyDecision(this.currentStage(String(id)), name, controller)
+    const plan = runtimeRecoveryPlan(this, String(id))
+    if (plan && name === 'bash' && ['failed','blocked'].includes(state)) return 'Recover this recorded plugin incident automatically with playbook(action="recover"). Do not ask the user to clear/cancel/restart or remove validators.'
     const decision = super.policyDecision(id, name, controller)
     return decision && name === 'bash' && ['awaiting_review','failed','blocked'].includes(state)
       ? `${decision} For read-only media measurements use playbook(action="diagnose"); do not retry shell variants or ask for cancellation.` : decision
   }
   report(id) {
     const result = super.report(id)
+    if (result.summary) result.summary.runtimeRecoveries = (result.history ?? []).filter(e => e.type === 'runtime_incident_recovered').length
     if (result.summary) result.summary.dependencyRecoveries = (result.history ?? []).filter(e => e.type === 'dependency_recovery').length
     return result
   }

@@ -54,4 +54,43 @@ try {
   assert.equal(rejected.gatePassed,false)
   assert.match(rejected.gate.failures.join(' '),/CROSS_RUN_PATH/)
   console.log('Real Python bootstrap + current-root validator + cross-run rejection passed through simulated Host dispatch. No deployed DSH/model claim.')
+
+  // Rehydrate the precise *shape* of a v0.7.0 path-base incident. Reopening is
+  // conditional on real file validation; no manual cancel or budget deletion.
+  const held=engine.runs.get('b'), oldId=held.id, oldHistory=structuredClone(held.history)
+  await writeFile(join(rootB,'brief/narration.txt'),'Actual narration retained in the current run.')
+  await writeFile(join(rootB,'production.json'),JSON.stringify({schemaVersion:1,script:'brief/narration.txt',segments:[{id:'s',text:'Actual narration retained in the current run.'}]}))
+  const relativeManifest=`.dsh-runs/${held.isolation.key}/production.json`
+  held.state='failed';held.blocker=null;held.finishedAt=new Date().toISOString();held.lastGate={stageId:'script',passed:false,
+    failures:[`narration: Missing artifact: ${relativeManifest}`],recovery:{code:'manifest',exhausted:true}}
+  held.recoveryCounts={'0:script:manifest':3}
+  const recovered=await call(b,{action:'recover'})
+  assert.equal(recovered.recovered,true,JSON.stringify(recovered));assert.equal(engine.runs.get('b').id,oldId)
+  assert.deepEqual(engine.runs.get('b').history.slice(0,oldHistory.length),oldHistory)
+  assert.equal(engine.runs.get('b').recoveryCounts['0:script:manifest'],3)
+  assert.equal((await call(b,{action:'submit',stage_id:'script',evidence:{production_manifest:relativeManifest}})).gatePassed,true)
+
+  // A pre-isolation user revision is continued in its recorded scope, not
+  // discarded and not relabelled as a fresh independent-model experiment.
+  const {mkdir,readFile}=await import('node:fs/promises'),{createHash}=await import('node:crypto')
+  const legacyDir=join(workspace,'retained-episode'),legacyManifest=join(legacyDir,'production.json')
+  await mkdir(legacyDir);await writeFile(join(legacyDir,'script.txt'),'Retained full spoken input.')
+  await writeFile(legacyManifest,JSON.stringify({schemaVersion:1,script:'script.txt',segments:[{id:'s',text:'Retained full spoken input.'}]}))
+  const hash=createHash('sha256').update(await readFile(legacyManifest)).digest('hex')
+  const legacyBook=structuredClone(engine.getPlaybook('owned-media-fixture'));legacyBook.version='0.4.0'
+  const reason='Independent media check unavailable: No prepared run-owned artifact root; legacy runs require a fresh task, not adoption of old outputs'
+  const old={id:'legacy-run',sessionId:'legacy',playbookId:legacyBook.id,playbookVersion:'0.4.0',playbookSnapshot:legacyBook,
+    state:'blocked',blocker:{kind:'prerequisite',reason},stageId:'script',stageEpoch:3,stageAttempt:1,revision:1,selfRepairs:0,
+    startedAt:'2026-01-01T00:00:00Z',input:{task:'Fix ending, preserve approved speech.'},evidence:{},observations:{},machineEvidence:{},
+    candidates:[{artifacts:{bindings:{[legacyManifest]:{path:legacyManifest,sha256:hash}}}}],
+    history:[{type:'run_started'},{type:'human_review_rejected'}],revisions:[{reason:'Fix the ending.'}],
+    lastGate:{stageId:'script',passed:false,failures:[reason]}}
+  engine.runs.set('legacy',old);const l=agent('legacy')
+  const continued=await call(l,{action:'workspace'})
+  assert.equal(continued.status.active,true,JSON.stringify(continued));assert.equal(engine.runs.get('legacy').id,'legacy-run')
+  assert.equal(engine.runs.get('legacy').isolation,undefined);assert.equal(continued.legacyContinuation.independentRun,false)
+  assert.equal((await call(l,{action:'submit',stage_id:'script',evidence:{production_manifest:legacyManifest}})).gatePassed,true)
+  assert.equal(createHash('sha256').update(await readFile(legacyManifest)).digest('hex'),hash)
+  console.log('Real guarded Python recovery passed: existing failed run resumed; recorded legacy revision retained; no cancellation, no cleared counters, no bypassed Gate.')
+
 } finally {await engine.queue;await rm(workspace,{recursive:true,force:true})}

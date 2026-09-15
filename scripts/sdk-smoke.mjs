@@ -61,3 +61,16 @@ const compact=await tool.execute({action:'status'},exec),full=await tool.execute
 assert.equal(compact.status.detail.startsWith('compact'),true)
 assert.ok(Object.hasOwn(full.status,'input'))
 console.log('Ergonomic controller aliases, compact/full results and read-only diagnosis schema accepted by the real SDK.')
+
+// The recovery wrapper must remain a valid real-SDK tool with read-only source path selection.
+const { createRuntimeRecovery } = await import('../src/runtime-recovery.js')
+const { WorkflowEngine } = await import('../src/workflow-ux.js')
+const re = new WorkflowEngine(), rr = new PlaybookRouter(re)
+const recovery = createRuntimeRecovery({tools:{}},re,async()=>{})
+const rt = defineTool(recovery.wrap(playbookDefinition(re,async()=>[],rr)))
+assert.ok(rt.parameters.properties.action.enum.includes('recover'))
+assert.equal(rt.parameters.properties.source_paths.type,'array')
+const rv = await rt.execute({action:'recover'},{agent:{id:'no-run',session:{header:{cwd:'/workspace'}}},signal:new AbortController().signal})
+assert.equal(rv.recovered,false)
+assert.deepEqual(rv,JSON.parse(JSON.stringify(rv)))
+console.log('Real SDK recovery/source-path schema passed; no model or live deployment claimed.')
