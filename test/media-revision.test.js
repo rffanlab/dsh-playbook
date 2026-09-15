@@ -5,7 +5,7 @@ import { BUILTIN_PLAYBOOKS } from '../src/builtins.js'
 import { PlaybookRouter } from '../src/routing.js'
 import { playbookDefinition } from '../src/tool.js'
 import { repairEvidenceShape, normalizePlaybook } from '../src/core.js'
-import { mediaIssues } from '../src/media-checks.js'
+import { mediaIssues, mediaWarnings } from '../src/media-checks.js'
 import { createMediaRunner, validatorCommand } from '../src/host-media.js'
 import { installAutoRouting } from '../src/automation.js'
 import { reviewFeedback, reportMarkdown } from '../src/run-control.js'
@@ -77,12 +77,13 @@ test('user rejection retains the same run, script, prior candidate and factual c
   await e.repair('s','produce','Audio chain has a concrete identified mixing fault.')
   assert.equal(e.status('s').run.id,id);assert.equal(e.currentStage('s').id,'produce')
 })
-test('changed video with old cover bytes is marked stale after rejection',async()=>{
+test('accurate unchanged cover can survive a video edit; advisory is not a pixel-change gate',async()=>{
   const e=await engineFixture();await advance(e);await e.requestRevision('s','验收不通过，请返修')
   await e.repair('s','produce','Fix an audio mixing defect without modifying the script.');await advance(e,'qa')
   const check=mockCheck('video');check.video.binding.sha256='new-video'
   const out=await e.submit('s',{evidence:evidenceFor(e.currentStage('s')),runtimeChecks:[check]})
-  assert.match(out.lastGate.failures.join(' '),/COVER_STALE/)
+  assert.equal(out.lastGate.passed,true)
+  assert.match(mediaWarnings([check],e.runs.get('s').previousCandidate).join(' '),/COVER_REVIEW/)
 })
 test('failed run cannot work informally, but can take a bounded technical repair',async()=>{
   const e=new PlaybookEngine();e.register({id:'p',stages:[{id:'s',objective:'Check',gate:{evidence:[{key:'ok',type:'boolean',equals:true}]}}]});await e.start('s','p')

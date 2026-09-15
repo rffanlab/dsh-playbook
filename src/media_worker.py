@@ -296,33 +296,113 @@ def audio_failures(value, label):
     return errors
 
 
-def subtitle_check(text, duration, script):
-    stamps = re.findall(r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})', text)
-    require(len(stamps) > 0, 'SRT has no valid timed events')
-    last = -1.0
-    for row in stamps:
-        numbers = [int(n) for n in row]
-        start = numbers[0] * 3600 + numbers[1] * 60 + numbers[2] + numbers[3] / 1000
-        end = numbers[4] * 3600 + numbers[5] * 60 + numbers[6] + numbers[7] / 1000
-        require(0 <= start < end <= duration + 0.15 and start >= last,
-                'SRT time ranges are invalid, overlapping or beyond the video')
-        last = end
-    words = []
-    for block in re.split(r'\n\s*\n', text.strip()):
-        lines = block.splitlines()
-        timing = [i for i, line in enumerate(lines) if '-->' in line]
-        require(len(timing) == 1, 'SRT block must have exactly one time range')
-        spoken = re.sub(r'<[^>]+>', '', ''.join(lines[timing[0] + 1:])).strip()
-        require(bool(spoken), 'Empty subtitle cue')
-        words.append(spoken)
-    require(normalized(''.join(words)) == normalized(script), 'SUBTITLE_COVERAGE: cue text differs from the full spoken script')
-    return {'events': len(stamps), 'lastEndSeconds': last, 'scriptCoverage': True}
+def subtitle_words(text):
+    """Display punctuation is not missing speech. Preserve words, numbers and symbols."""
+    value = normalized(text)
+    def keep(i, c):
+        numeric = c in '.,，:：/+-−%％' and ((i > 0 and value[i-1].isdigit()) or (i+1 < len(value) and value[i+1].isdigit()))
+        return numeric or c in '%％' or not unicodedata.category(c).startswith('P')
+    return ''.join(c for i,c in enumerate(value) if keep(i,c))
+
+
+def subtitle_check(text, duration, script, format='srt', narration_styles=None):
+    events = []
+    ignored = 0
+    if format == 'ass':
+        fields = None
+        section = ''
+        styles = narration_styles
+        require(styles is None or (isinstance(styles, list) and 0 < len(styles) <= 16 and
+                all(isinstance(v, str) and v.strip() for v in styles)), 'ASS narrationStyles must be an explicit non-empty string list')
+        def ass_time(value):
+            m = re.fullmatch(r'(\d+):(\d{2}):(\d{2})[.](\d{2,3})', value.strip())
+            require(m is not None, 'SUBTITLE_TIMING: invalid ASS timestamp')
+            h, mi, se, fraction = m.groups()
+            require(int(mi) < 60 and int(se) < 60, 'SUBTITLE_TIMING: invalid ASS minute/second')
+            return int(h)*3600+int(mi)*60+int(se)+int(fraction)/(10**len(fraction))
+        for line in text.splitlines():
+            line=line.strip()
+            if line.startswith('['): section=line.lower()
+            if section != '[events]': continue
+            if line.lower().startswith('format:'):
+                fields=[v.strip().lower() for v in line.split(':',1)[1].split(',')]
+            if not line.lower().startswith('dialogue:'): continue
+            require(fields and all(k in fields for k in ['start','end','style','text']), 'ASS Events Format must declare Start, End, Style, Text')
+            # Text is conventionally last and may contain commas. Reject ambiguous layouts.
+            require(fields[-1] == 'text', 'ASS Text must be the last Events field')
+            values=line.split(':',1)[1].lstrip().split(',',len(fields)-1)
+            require(len(values) == len(fields), 'Malformed ASS Dialogue event')
+            row=dict(zip(fields,values))
+            if styles is not None and row['style'].strip() not in styles:
+                ignored += 1; continue
+            words=re.sub(r'\{[^}]*\}', '', row['text']).replace('\\N',' ').replace('\\n',' ').replace('\\h',' ')
+            events.append((ass_time(row['start']),ass_time(row['end']),words))
+    else:
+        require(format == 'srt', 'Unsupported subtitle format; use srt or ass')
+        for block in re.split(r'\n\s*\n', text.strip()):
+            lines=block.splitlines()
+            timing=[i for i,line in enumerate(lines) if '-->' in line]
+            require(len(timing)==1, 'SRT block must have exactly one time range')
+            index=timing[0]
+            m=re.fullmatch(r'\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*',lines[index])
+            require(m is not None, 'SUBTITLE_TIMING: invalid SRT time range')
+            n=[int(v) for v in m.groups()]
+            require(n[1]<60 and n[2]<60 and n[5]<60 and n[6]<60,'SUBTITLE_TIMING: invalid SRT minute/second')
+            start=n[0]*3600+n[1]*60+n[2]+n[3]/1000
+            end=n[4]*3600+n[5]*60+n[6]+n[7]/1000
+            words=re.sub(r'<[^>]+>', '', ''.join(lines[index+1:])).strip()
+            events.append((start,end,words))
+    require(events, 'SUBTITLE_TIMING: no narration events; specify narrationStyles for layered ASS')
+    last=-1.0
+    for index,(start,end,words) in enumerate(events):
+        require(0<=start<end<=duration+0.15 and start>=last-0.001,
+                'SUBTITLE_TIMING: narration event %d overlaps or exceeds media duration; overlays must be separate from narration' % (index+1))
+        require(bool(words.strip()), 'Empty subtitle cue')
+        last=end
+    joined=''.join(words for _,_,words in events)
+    wanted,actual=subtitle_words(script),subtitle_words(joined)
+    if wanted != actual:
+        i=next((i for i,(a,b) in enumerate(zip(wanted,actual)) if a!=b),min(len(wanted),len(actual)))
+        raise Invalid('SUBTITLE_COVERAGE: wording differs at character %d; expected=%r actual=%r; fix narration captions, not speech speed' % (i,wanted[max(0,i-8):i+20],actual[max(0,i-8):i+20]))
+    return {'events':len(events),'lastEndSeconds':last,'scriptCoverage':True,
+            'format':format,'ignoredOverlayEvents':ignored,
+            'punctuationNormalized':normalized(joined)!=normalized(script)}
+
+
+def manifest_signature(manifest):
+    # Unrelated report metadata must not make unchanged media stale.
+    keys=['schemaVersion','script','segments','video','cover','title','subtitles',
+          'durationSeconds','coverForVideoSha256']
+    value = {k:manifest.get(k) for k in keys}
+    if isinstance(value.get('segments'), list):
+        value['segments'] = [{k:segment.get(k) for k in ['id','text','audio','start','end']} if isinstance(segment,dict) else segment for segment in value['segments']]
+    return json_hash(value)
+
+
+def cached_handoff(reader, manifest_path, manifest, previous, result):
+    if not previous or not previous.get('passed') or not previous.get('manifestSignature'):
+        return None  # Older QA snapshots need one ordinary full validation.
+    require(previous['manifestSignature']==manifest_signature(manifest), 'QA_STALE: media references/timeline changed; recheck qa, do not regenerate every asset')
+    old_manifest=previous.get('manifestPath')
+    require(old_manifest and previous.get('bindings'), 'QA_STALE: prior artifact bindings unavailable')
+    for path,binding in previous['bindings'].items():
+        if path==old_manifest: continue
+        current=reader.fingerprint(reader.path(path))
+        require(current['sha256']==binding['sha256'] and current['bytes']==binding['bytes'],
+                'QA_STALE: changed artifact '+path+'; recheck qa before delivery')
+    reader.unchanged()
+    for key in ['coverage','narration','segmentAudio','video','cover','subtitles','timing']:
+        if key in previous: result[key]=previous[key]
+    result.update(passed=True,status='pass',manifestPath=str(manifest_path),manifestSignature=manifest_signature(manifest),
+                  bindings=reader.bindings,warnings=previous.get('warnings',[]),
+                  cache={'mode':'hash-revalidated','decodedAgain':False,'note':'Every previously checked artifact was rehashed; technical measurements are reused only for identical bytes and media references.'})
+    return result
 
 
 def validate(request, root=None):
     result = {'validatorVersion': VERSION, 'kind': request.get('kind'), 'passed': False,
               'status': 'fail', 'failures': [], 'bindings': {}, 'policy': POLICY.copy(),
-              'semanticVerification': False, 'speechRecognition': False}
+              'semanticVerification': False, 'speechRecognition': False, 'warnings': []}
     try:
         if request.get('kind') == 'prepare':
             return prepare_workspace(request.get('isolation'))
@@ -330,11 +410,23 @@ def validate(request, root=None):
         if reader.ownership:
             result['ownership'] = reader.ownership
         kind = request['kind']
-        require(kind in ['narration', 'pilot', 'video', 'handoff'], 'Unsupported validator kind')
+        require(kind in ['narration', 'pilot', 'video', 'handoff', 'diagnose'], 'Unsupported validator kind')
+        if kind == 'diagnose':
+            result['video'] = media(reader, request.get('video'), reader.root, video=True)
+            result['failures'].extend(audio_failures(result['video'], 'diagnostic'))
+            reader.unchanged()
+            result.update(bindings=reader.bindings, passed=not result['failures'], status='pass' if not result['failures'] else 'fail', notAGate=True)
+            return result
         manifest_path, manifest_text = reader.text(request['manifest'])
         manifest = json.loads(manifest_text)
         require(manifest.get('schemaVersion') == 1, 'Manifest requires schemaVersion=1')
         base = manifest_path.parent
+        result['manifestPath'] = str(manifest_path)
+        result['manifestSignature'] = manifest_signature(manifest)
+        if kind == 'handoff':
+            cached = cached_handoff(reader, manifest_path, manifest, request.get('previousQa'), result)
+            if cached is not None:
+                return cached
         script_path, script = reader.text(manifest.get('script'), base)
         segments = manifest.get('segments')
         require(isinstance(segments, list) and 1 <= len(segments) <= 120, 'Need 1..120 narration segments')
@@ -389,8 +481,18 @@ def validate(request, root=None):
                      '-format_whitelist', 'image2,png_pipe,jpeg_pipe,webp_pipe', '-i', str(cover), '-frames:v', '1', '-f', 'null', '-'], timeout=15)
                 _, title = reader.text(manifest.get('title'), base)
                 require(bool(title.strip()), 'Title is empty')
-                _, subs = reader.text(manifest.get('subtitles'), base)
-                result['subtitles'] = subtitle_check(subs, duration, script)
+                spec = manifest.get('subtitles')
+                subtitle_path = spec.get('path') if isinstance(spec, dict) else spec
+                fmt = spec.get('format') if isinstance(spec, dict) else None
+                styles = spec.get('narrationStyles') if isinstance(spec, dict) else None
+                _, subs = reader.text(subtitle_path, base)
+                fmt = fmt or ('ass' if str(subtitle_path).lower().endswith('.ass') else 'srt')
+                result['subtitles'] = subtitle_check(subs, duration, script, fmt, styles)
+                result['timing'] = {'narrationEndSeconds': last, 'videoSeconds': duration,
+                                    'extraTailSeconds': round(max(0,duration-last),4),
+                                    'master': 'measured narration; visual cuts and quote overlays have independent timing'}
+                if duration-last > POLICY['avToleranceSeconds']:
+                    result['warnings'].append('AUDIO_MASTER_TAIL: video extends %.3fs beyond the declared narration end; remove accidental tpad/apad/loop padding. Intentional outros must be reported, not disguised as natural speech.' % (duration-last))
         reader.unchanged()
         result['bindings'] = reader.bindings
         result['passed'] = not result['failures']
@@ -405,7 +507,7 @@ def validate(request, root=None):
 
 if __name__ == '__main__':
     try:
-        require(len(sys.argv) == 2 and len(sys.argv[1]) < 32000, 'One bounded base64 request is required')
+        require(len(sys.argv) == 2 and len(sys.argv[1]) < 524288, 'One bounded base64 request is required')
         req = json.loads(base64.b64decode(sys.argv[1], validate=True).decode('utf-8'))
         print(json.dumps(validate(req), ensure_ascii=False, allow_nan=False))
     except Exception as error:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- Recognize long direct-user revision reviews without treating embedded examples as authorizations.
+- Accept unambiguous repair aliases and return compact status/full detail on demand.
+- Recover actual stale dependencies with bounded retries, rather than repeated production loops.
+- Support ASS narration styles, display punctuation, unchanged-cover advisories and hash-revalidated QA reuse.
+- Add guarded read-only diagnostics of recorded media; keep mutation and ownership controls.
+- Scope pilots and natural audio/visual timing; add non-blocking stage-activity notices.
+- Add synthetic regressions from observed failure patterns, without publishing private logs or claiming a model benchmark improvement.
+
 ## 0.6.0
 
 - Allocate engine-owned per-run media artifact roots without changing project/session cwd.

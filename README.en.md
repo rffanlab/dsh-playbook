@@ -4,7 +4,13 @@
 
 **Give a task, read its sources, choose a project SOP, execute through evidence gates.**
 
-## 0.6.0: per-run media artifact roots
+## 0.7.0: less paperwork, targeted repair, unchanged quality requirements
+
+Recognize long user reviews and direct rejection phrases; accept repair aliases; return stale narration directly to script rather than cycling producer/QA. Compact status by default, ASS narration-style support, display-punctuation normalization and guarded read-only media diagnostics. Handoff rehashes unchanged artifacts instead of decoding everything again; generic covers no longer need meaningless byte edits. Keep pilots to one natural segment and final duration driven by audio, not fixed overlay lengths.
+
+[Workflow corrections, ASS examples and limits](docs/WORKFLOW-UX.en.md)
+
+## Retained: per-run media artifact roots
 
 New media production runs allocate `.dsh-runs/<UUID>` instead of treating old final.mp4 files in the shared project as current outputs. Validation checks actual paths, ownership markers, links, supplementary timestamps and known prior final hashes. Reports include validation-time lineage. **This is artifact acceptance isolation, not an OS read sandbox or proof that a model created the bytes.**
 

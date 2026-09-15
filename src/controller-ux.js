@@ -1,0 +1,99 @@
+import { mediaWarnings } from './media-checks.js'
+/** Model-facing ergonomics. Full durable state stays in the engine and explicit reports. */
+const copy = value => JSON.parse(JSON.stringify(value))
+const clip = (value, size = 600) => {
+  const text = typeof value === 'string' ? value : JSON.stringify(value ?? null)
+  return text.length > size ? text.slice(0, size) + ' [truncated; detail=full for original]' : text
+}
+export function normalizeAction(input) {
+  const args = { ...input }, corrections = []
+  const aliases = args.action === 'repair'
+    ? { stage_id: ['target_stage_id','target_stage','target'], note: ['diagnosis','reason'] }
+    : args.action === 'block' ? { note: ['reason','diagnosis'] } : {}
+  for (const [canonical, names] of Object.entries(aliases)) {
+    const found = [canonical, ...names].filter(k => args[k] !== undefined)
+    if (new Set(found.map(k => args[k])).size > 1) throw new Error(`Conflicting ${canonical} aliases: ${found.join(', ')}; send one value`)
+    if (found.length && args[canonical] === undefined) {
+      args[canonical] = args[found[0]]; corrections.push({ from: found[0], to: canonical })
+    }
+    for (const name of names) delete args[name]
+  }
+  return { args, corrections }
+}
+export function compactStatus(s) {
+  if (!s?.run) return s
+  const manifests = Object.entries(s.evidence ?? {}).filter(([,e]) => e?.production_manifest)
+  return {
+    active: s.active, attached: s.attached, run: s.run, blocker: s.blocker, isolation: s.isolation,
+    stage: s.stage ? {id:s.stage.id,title:s.stage.title,mode:s.stage.mode,objective:s.stage.objective,gate:s.stage.gate,tools:s.stage.tools,retry:s.stage.retry,next:s.stage.next} : null,
+    instruction: s.stage?.instructions?.join('\n') ?? s.instruction, lastGate: s.lastGate, recovery: s.recovery, activity: s.activity,
+    currentManifest: manifests.at(-1)?.[1].production_manifest ?? null,
+    input: s.input ? {project:s.input.project,sop:s.input.sop} : undefined,
+    acceptedEvidenceKeys: Object.keys(s.evidence ?? {}),
+    machineChecks: Object.entries(s.machineEvidence ?? {}).flatMap(([stage, checks]) => checks.map(c => ({stage,kind:c.kind,passed:c.passed,warnings:c.warnings}))),
+    observations: Object.fromEntries(Object.entries(s.observations ?? {}).map(([tool,row]) => [tool, {
+      calls: row.calls, successes: row.successes, failures: row.failures, lastCallId: row.lastCallId,
+      receipts: (row.receipts ?? []).slice(-4),
+    }])),
+    revisionFeedback: s.revisionFeedback ? clip(s.revisionFeedback, 1200) : null,
+    detail: 'compact; use detail=full only to read prior evidence or full feedback',
+  }
+}
+function compactValidation(rows) {
+  return rows?.map(c => ({ kind:c.kind, status:c.status, passed:c.passed, failures:c.failures,
+    warnings:c.warnings, coverage:c.coverage, cache:c.cache, callId:c.callId,
+    video: c.video ? {path:c.video.binding?.path,sha256:c.video.binding?.sha256,durationSeconds:c.video.durationSeconds,
+      audio:c.video.audio} : undefined,
+    timing:c.timing, semanticVerification:c.semanticVerification, speechRecognition:c.speechRecognition }))
+}
+export function usableController(definition, engine, { diagnose } = {}) {
+  return { ...definition,
+    description: definition.description + ' Prefer compact status; detail=full is optional. repair uses stage_id + note (target_stage_id/diagnosis aliases accepted). diagnose measures existing media read-only even while awaiting review; it cannot accept/revise a candidate or grant shell access. Technical failures return the exact dependency to fix, not permission to redo everything.',
+    parameters: { ...definition.parameters,
+      action: { ...definition.parameters.action, enum: [...definition.parameters.action.enum, 'diagnose'] },
+      detail: { type:'string',enum:['compact','full'],description:'Default compact; full only when prior evidence/raw validation is necessary.' },
+      target_stage_id: { type:'string',description:'Alias of stage_id for repair.' },
+      target_stage: { type:'string',description:'Alias of stage_id for repair.' },
+      target: { type:'string',description:'Alias of stage_id for repair.' },
+      diagnosis: { type:'string',description:'Alias of note for repair/block. Give the actual problem, not a budget reset.' },
+      reason: { type:'string',description:'Alias of note for repair/block.' },
+    },
+    async execute(raw, exec) {
+      const { args, corrections } = normalizeAction(raw)
+      const id = exec.agent?.id == null ? null : String(exec.agent.id)
+      if (args.action === 'diagnose') {
+        await definition.execute({action:'status'}, exec) // normal hydration/caller identity
+        if (!diagnose) throw new Error('Read-only media diagnostics unavailable in this Host; no raw-shell fallback')
+        return copy(await diagnose(exec, {full: args.detail === 'full'}))
+      }
+      if (['repair','block'].includes(args.action) && (typeof args.note !== 'string' || args.note.trim().length < 8)) {
+        return {ok:false,error:{code:'MISSING_DIAGNOSIS',message:'Use note or diagnosis with the concrete fault; neither was provided with enough detail.'},
+          expected:{action:args.action,stage_id:engine.status(id)?.run?.stageId,note:'<actual fault and smallest correction>'}}
+      }
+      if (args.action === 'submit' && id) {
+        const status = engine.status(id)
+        if (!args.stage_id || args.stage_id !== status.run?.stageId) return copy({ok:false,error:{code:'STAGE_MISMATCH',message:'Submit only the current stage. Use repair to revisit an earlier stage; never repeat a failed future submission.'},
+          current_stage_id:status.run?.stageId,current_state:status.run?.state,required_evidence:status.stage?.gate?.evidence,
+          recovery:status.lastGate?.recovery,expected:{action:'submit',stage_id:status.run?.stageId,evidence:'<actual evidence matching the listed fields>'}})
+      }
+      const out = await definition.execute(args, exec)
+      const advisories = mediaWarnings(out.validation, engine.runs.get(id)?.previousCandidate)
+      if (advisories.length) out.advisories = advisories
+      if (args.detail === 'full') return copy({...out,...(corrections.length?{argumentCorrections:corrections}:{})})
+      const result = {...out}
+      if (result.status) result.status = compactStatus(result.status)
+      if (result.validation) result.validation = compactValidation(result.validation)
+      if (result.message?.includes('\n')) result.message = result.message.split('\n')[0] // stage is already in status
+      if (result.status?.lastGate?.recovery) result.nextAction = result.status.lastGate.recovery.exhausted ? 'report_recovery_limit' : 'fix_indicated_dependency'
+      if (result.report) {
+        const r=result.report
+        result.report={run:r.run,summary:r.summary,recovery:r.lastGate?.recovery,blocker:r.blocker,
+          candidates:(r.candidates??[]).map(c=>({revision:c.revision,at:c.at,video:c.artifacts?.video?.binding})),
+          archivedRuns:r.archivedRuns,warning:r.warning,detail:'compact; detail=full or export_report preserves complete event history'}
+        if (result.markdown) result.markdown='# Playbook system summary\n\n```json\n'+JSON.stringify(result.report,null,2)+'\n```\n'
+      }
+      if (corrections.length) result.argumentCorrections=corrections
+      return copy(result)
+    },
+  }
+}

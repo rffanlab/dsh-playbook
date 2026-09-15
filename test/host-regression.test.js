@@ -57,7 +57,7 @@ test('automatic routing is preserved and delivers the new current-stage contract
   const message = { id: 'new-user-message', source: { kind: 'user' }, content: [{ type: 'text', text: '修复这个接口bug' }] }
   const out = await h.listeners.get('agent/pre-step')({ agent: h.agent, signal: h.signal, messages: [message] }, async () => ({ kind: 'enter', messages: [message] }))
   assert.equal(h.engine.status('session').run.playbookId, 'bug-fix')
-  assert.equal(h.engine.status('session').run.playbookVersion, '0.5.0')
+  assert.equal(h.engine.status('session').run.playbookVersion, '0.7.0')
   assert.match(out.messages[1].content[0].text, /actual stage work/)
 })
 test('a blocked active task is not replaced on the next direct user request', async t => {

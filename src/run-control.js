@@ -50,7 +50,7 @@ export async function requestRevision(engine, sessionId, reason, { signal, messa
     run.previousCandidate = clone(run.candidates?.at(-1)?.artifacts ?? run.previousCandidate ?? null)
     // Keep a truthful historical snapshot before invalidating the rework chain.
     run.revisions ??= []
-    run.revisions.push({ revision, requestedAt: now, previousState: run.state, reason: String(reason).slice(0, 4000),
+    run.revisions.push({ revision, requestedAt: now, previousState: run.state, reason: String(reason).slice(0, 24000),
       previousCandidate: clone(run.previousCandidate) })
     run.revision = revision
     run.feedbackIds = [...(run.feedbackIds ?? []), ...(messageId ? [messageId] : [])].slice(-64)
@@ -60,7 +60,7 @@ export async function requestRevision(engine, sessionId, reason, { signal, messa
     run.stageId = target; run.stageAttempt = 1; run.stageEpoch = (run.stageEpoch ?? 0) + 1
     run.observations = {}; run.formatRepairs = 0; run.updatedAt = now
     run.history.push({ type: 'human_review_rejected', at: now, revision, stageId: target,
-      reason: String(reason).slice(0, 4000), invalidated, messageId: messageId ?? null })
+      reason: String(reason).slice(0, 24000), invalidated, messageId: messageId ?? null })
     await engine.save(); return engine.status(sessionId)
   })
 }
@@ -102,11 +102,32 @@ export function reportMarkdown(value) {
     + '本区由插件事件生成；不是模型自评，不代表用户已验收。\n\n'
     + '```json\n' + JSON.stringify(value, null, 2) + '\n```\n'
 }
-/** Conservative direct-user review cues; never read tool logs as authorization. */
+/** Direct-user intent, not a whole-message blacklist. Long reviews may contain examples. */
 export function reviewFeedback(text) {
-  if (typeof text !== 'string' || text.length > 1600 || /```|~~~|^\s*>/.test(text) || /如果|假如|示例|日志里|他说|what if/i.test(text)) return null
-  if (/^(?:如何|怎么|为什么|请问|帮我写|给我写|解释)/.test(text.trim())) return null
-  if (/验收不通过|验收未通过|不合格.*返修|请.*(?:返修|重做)|这版.*(?:不行|不满意)|reject (?:this|the)|needs? revision|not accepted/i.test(text)) return 'reject'
-  if (/^(?:好的[，,。\s]*)?(?:这版)?(?:我确认)?(?:验收通过|确认通过|通过验收|接受这版)[！!。\s]*$|^I accept this(?: version)?[.!\s]*$/i.test(text.trim())) return 'accept'
+  if (typeof text !== 'string' || !text.trim() || text.length > 64000) return null
+  const lines = []
+  let fence = null
+  for (const raw of text.split(/\r?\n/)) {
+    const f = /^\s*(`{3,}|~{3,})/.exec(raw)
+    if (f) { if (!fence) fence=f[1][0]; else if (fence===f[1][0]) fence=null; continue }
+    if (fence || /^\s*>/.test(raw)) continue
+    const line = raw.trim().replace(/^#{1,6}\s*/, '').replaceAll('**','')
+    if (line) lines.push(line)
+  }
+  if (!lines.length) return null
+  const lead=lines[0]
+  if (/^(?:如果|假如|假设|示例|日志里|他说|如何|怎么|为什么|请问|帮我写|给我写|解释|分析|总结|翻译|提取|复述|请分析|帮我分析|summarize|translate|analy[sz]e|what if|example|write (?:an? )?example)/i.test(lead)) return null
+  const direct = lines.filter(line => !/^(?:如果|假如|假设|示例|日志里|他说|例如|say |what if|example)/i.test(line))
+  // Structured verdict must be introduced as a real review, not a quoted log/example.
+  const isReview = /Human Review|人工(?:审核|验收)|最终(?:审核|验收)|终审/i.test(lines.slice(0,4).join(' '))
+  if (isReview && direct.some(line => /^(?:结论|FINAL_STATUS|VERDICT|审核结论)\s*[:：]\s*(?:REVISE_ONCE|REVISE|DO_NOT_PUBLISH_YET|REJECT)\b/i.test(line))) return 'reject'
+  if (isReview && direct.some((line,i) => /^FINAL_STATUS\s*[:：]\s*$/i.test(line) && /^(?:REVISE_ONCE|DO_NOT_PUBLISH_YET|REJECT)\b/.test(direct[i+1]??''))) return 'reject'
+  if (/^(?:好的[，,。\s]*)?(?:这版)?(?:我确认)?(?:验收通过|确认通过|通过验收|接受这版)[！!。\s]*$|^I accept this(?: version)?[.!\s]*$/i.test(lines.join('\n'))) return 'accept'
+  // Only a direct instruction near the beginning, not an example embedded later.
+  const head=direct.slice(0,4).join('\n')
+  if (/^(?:(?:大佬|老哥|请|麻烦)[，,：:\s]*)?(?:打回(?:当前|这[一版份个])?(?:候选|成片|版本)|退回(?:当前|这[一版份个])?(?:候选|成片|版本)|(?:最终成片)?验收(?:不|未)通过)/m.test(head)) return 'reject'
+  if (/^(?:请|麻烦)(?:按|按照|仅|只|把|将|自行|对|就|基于|修|返|重).{0,100}(?:返修|重做|修订|修正|修改)/m.test(head)) return 'reject'
+  if (/^按.{0,100}(?:重做|返修|修订|修改).{0,40}(?:v\d+|收尾|这版|当前|候选)/im.test(head)) return 'reject'
+  if (/^(?:这版|这个成片|当前版本).{0,40}(?:不行|不满意|不合格).{0,40}(?:返修|重做)?/m.test(head) || /^(?:please )?(?:reject (?:this|the)|needs? revision|not accepted)/im.test(head)) return 'reject'
   return null
 }

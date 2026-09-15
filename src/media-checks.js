@@ -29,16 +29,9 @@ export function mediaIssues(stage, checks, run) {
         (check.narration.scriptSha256 !== script.narration.scriptSha256 || check.narration.segmentSha256 !== script.narration.segmentSha256)) {
       add('NARRATION_STALE: canonical script or exact segment texts changed; repair back to script, then repeat downstream work')
     }
-    if (rule.kind === 'video' || rule.kind === 'handoff') {
-      const old = run.previousCandidate?.video
-      if (old?.binding?.sha256 && check.video?.binding?.sha256 !== old.binding.sha256 &&
-          check.cover?.sha256 && check.cover.sha256 === run.previousCandidate?.cover?.sha256) {
-        add('COVER_STALE: video changed but cover bytes equal the rejected version; regenerate/review the cover, remove stale duration claims')
-      }
-    }
     if (rule.kind === 'handoff') {
       const qa = Object.values(accepted).flat().find(item => item.kind === 'video')
-      if (!qa || JSON.stringify(sortedBindings(qa.bindings)) !== JSON.stringify(sortedBindings(check.bindings))) {
+      if (!qa || !sameMediaSnapshot(qa, check)) {
         add('QA_STALE: artifacts differ from the accepted technical QA snapshot; return to qa before handoff')
       }
     }
@@ -47,4 +40,17 @@ export function mediaIssues(stage, checks, run) {
 }
 function sortedBindings(bindings = {}) {
   return Object.keys(bindings).sort().map(path => [path, bindings[path].sha256, bindings[path].bytes])
+}
+
+export function sameMediaSnapshot(qa, check) {
+  const skipManifest = qa.manifestSignature && check.manifestSignature
+  if (skipManifest && qa.manifestSignature !== check.manifestSignature) return false
+  const bindings = row => Object.fromEntries(Object.entries(row.bindings ?? {}).filter(([path]) => !skipManifest || path !== row.manifestPath))
+  return JSON.stringify(sortedBindings(bindings(qa))) === JSON.stringify(sortedBindings(bindings(check)))
+}
+export function mediaWarnings(checks, previous) {
+  return (checks ?? []).flatMap(check => previous?.video?.binding?.sha256 &&
+      check.video?.binding?.sha256 !== previous.video.binding.sha256 && check.cover?.sha256 &&
+      check.cover.sha256 === previous.cover?.sha256
+    ? ['COVER_REVIEW: unchanged cover may be reused when its title and claims still fit; check any duration text. Do not change a meaningless pixel to satisfy a hash rule.'] : [])
 }

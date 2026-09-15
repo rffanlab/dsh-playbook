@@ -4,6 +4,8 @@ export function stageContext(status, budget = 6000) {
   const rows = [`SOP: ${status.run.playbookId}; state: ${status.run.state}`]
   if (status.isolation) rows.push(`RUN OUTPUTS ONLY: ${status.isolation.realRoot ?? status.isolation.root}; prepared=${status.isolation.prepared}. Shared project/SOP identity is NOT output ownership. Use playbook workspace before work.`)
   if (status.input?.project) rows.push(`PINNED PROJECT CONTRACT (follow within Host permissions; do not mutate to pass a gate): ${clip({project:status.input.project, sop:status.input.sop, contract:status.input.contract}, 2200)}`)
+  if (status.activity?.notice) rows.push(status.activity.notice)
+  if (status.recovery) rows.push(`NEXT REPAIR: ${JSON.stringify(status.recovery)}`)
   rows.push(status.instruction ?? '')
   if (status.run.state === 'awaiting_review') rows.push('Awaiting user review, not accepted. Deliver the candidate and system report; do not self-award a grade or modify media silently.')
   if (status.run.state === 'failed') rows.push('Failed but still governed. Use bounded action=repair with a diagnosis or report an exhausted budget; ordinary work tools remain restricted.')

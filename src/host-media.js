@@ -4,10 +4,11 @@ import { createHash, randomUUID } from 'node:crypto'
 const program = readFileSync(new URL('./media_worker.py', import.meta.url), 'utf8')
 export const MEDIA_WORKER_SHA256 = createHash('sha256').update(program).digest('hex')
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`
-export function validatorCommand(kind, manifest, isolation) {
-  if (!['prepare', 'narration', 'pilot', 'video', 'handoff'].includes(kind)) throw new Error('unsupported validator kind')
+export function validatorCommand(kind, manifest, isolation, previousQa) {
+  if (!['prepare', 'narration', 'pilot', 'video', 'handoff', 'diagnose'].includes(kind)) throw new Error('unsupported validator kind')
   if (kind !== 'prepare' && (typeof manifest !== 'string' || !manifest.trim() || manifest.length > 4096 || manifest.includes('\0'))) throw new Error('manifest requires a bounded path')
-  const payload = Buffer.from(JSON.stringify({ kind, manifest, ...(isolation ? { isolation } : {}) }), 'utf8').toString('base64')
+  if (previousQa && Buffer.byteLength(JSON.stringify(previousQa)) > 60000) previousQa = undefined // bound argv; fall back to full read-only validation
+  const payload = Buffer.from(JSON.stringify({ kind, manifest, ...(kind === 'diagnose' ? {video: manifest} : {}), ...(isolation ? { isolation } : {}), ...(previousQa ? {previousQa} : {}) }), 'utf8').toString('base64')
   return `python3 -I -c ${quote(program)} ${quote(payload)}`
 }
 
@@ -33,7 +34,8 @@ export function createMediaRunner(ctx, engine) {
           isolation = engine.status(String(exec.agent.id)).isolation
           if (!isolation?.prepared) throw new Error('No prepared run-owned artifact root; legacy runs require a fresh task, not adoption of old outputs')
         }
-        command = validatorCommand(rule.kind, evidence[rule.pathKey], isolation)
+        const previousQa = rule.kind === 'handoff' && engine ? Object.values(engine.runs.get(String(exec.agent.id))?.machineEvidence ?? {}).flat().find(c => c.kind === 'video' && c.passed) : undefined
+        command = validatorCommand(rule.kind, evidence[rule.pathKey], isolation, previousQa)
       }
       catch (error) { results.push(unavailable(error.message)); continue }
       const callId = `${exec.callId}:playbook-validator:${randomUUID()}`
