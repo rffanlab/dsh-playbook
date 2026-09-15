@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join, normalize, resolve, relative, sep } from 'node:path'
 import { manifestPath } from './artifact-paths.js'
@@ -56,13 +57,31 @@ export function runtimeRecoveryPlan(engine, id) {
     message: 'A recorded project-relative manifest was resolved against the run root. The plugin can recheck its canonical path and reopen this stage without clearing history or weakening a gate.' }
 }
 
+/** Preserve the actual Host reason; an execution error is not necessarily an approval denial. */
+export function recoveryProbeFailure(out, callId) {
+  const value = out?.value
+  const clip = text => typeof text === 'string' ? text.slice(0, 1200) : null
+  let category = 'invalid-result'
+  if (out?.isError === true) category = 'tool-error'
+  else if (value?.sandbox?.denied || value?.sandbox?.runnerFailed) category = 'sandbox-denied'
+  else if (value?.timedOut === true) category = 'timeout'
+  else if (value?.aborted === true || value?.signal) category = 'aborted'
+  else if (value?.kind === 'background') category = 'background'
+  else if (value?.kind === 'foreground' && Number.isSafeInteger(value.exitCode) && value.exitCode !== 0) category = 'process-exit'
+  else if (value?.stdout?.truncated === true) category = 'truncated-result'
+  return { callId, tool: 'bash', category, code: clip(out?.error?.info?.code),
+    message: clip(out?.error?.message) ?? clip(out?.message) ?? `Recovery probe returned ${category}; inspect this exact tool call.`,
+    exitCode: Number.isSafeInteger(value?.exitCode) ? value.exitCode : null,
+    signal: clip(value?.signal), permissionsChanged: false, automaticRetry: false }
+}
+
 /** Recovery probes are fixed read-only validators through the SAME Host pipeline. */
 export function createRuntimeRecovery(ctx, engine, ready) {
   const pending = new Map(), inflight = new Map()
   const allows = exec => {
     const r = pending.get(exec.callId)
     return !!r && exec.parent === r.parent && exec.agent === r.agent && exec.name === 'bash' &&
-      exec.arguments?.command === r.command && exec.arguments?.workdir === r.workdir
+      exec.rootCallId === r.rootCallId && isDeepStrictEqual(exec.arguments, r.arguments)
   }
   async function recover(exec) {
     await ready(); engine.noteCaller(exec); await engine.queue
@@ -81,19 +100,31 @@ export function createRuntimeRecovery(ctx, engine, ready) {
     const path = scope?.manifest ?? plan.manifest, workdir = own?.realRoot ?? scope.workspace
     const command = validatorCommand('narration', path, own, undefined, scope)
     const callId = `${exec.callId}:runtime-recovery:${randomUUID()}`
-    pending.set(callId, { parent: exec.token, agent: exec.agent, command, workdir })
+    const rootCallId = exec.rootCallId ?? exec.callId
+    const args = { command, workdir, description: 'Recheck recorded manifest after plugin path repair', timeoutMs: 120000 }
+    pending.set(callId, { parent: exec.token, agent: exec.agent, rootCallId, arguments: clone(args) })
     let result
     try {
-      const out = await ctx.tools.execute({ name: 'bash', callId, rootCallId: exec.rootCallId ?? exec.callId, parent: exec.token,
-        agent: exec.agent, signal: exec.signal, arguments: { command, workdir, description: 'Recheck recorded manifest after plugin path repair', timeoutMs: 120000 } })
+      const out = await ctx.tools.execute({ name: 'bash', callId, rootCallId, parent: exec.token,
+        agent: exec.agent, signal: exec.signal, arguments: args })
       for (const c of out.additionalContexts ?? []) exec.deferContext?.(c)
       exec.signal?.throwIfAborted()
       const v = out.value
       if (out.isError !== false || v?.kind !== 'foreground' || v.exitCode !== 0 || v.signal !== null || v.aborted !== false ||
           v.timedOut !== false || v.stdout?.truncated !== false || v.sandbox?.denied || v.sandbox?.runnerFailed)
-        return { ok: false, recovered: false, nextAction: 'report_actual_host_failure', message: 'Recovery probe denied or unavailable; existing permissions are unchanged. Do not cancel or remove a gate.', status: engine.status(id) }
-      result = JSON.parse(v.stdout.text)
-      if (result.validatorVersion !== '0.4.0' || result.kind !== 'narration' || typeof result.passed !== 'boolean') throw new Error('Unsupported recovery probe output')
+        return { ok: false, recovered: false, readOnly: true, notAGate: true, nextAction: 'report_actual_host_failure',
+          hostFailure: recoveryProbeFailure(out, callId),
+          message: 'Report the exact hostFailure, not a generic request for authorization. Do not retry unchanged, offer SOP-external production, clear the run, or guess that Host code needs editing. Existing Host permissions remain authoritative.', status: engine.status(id) }
+      try {
+        if (typeof v.stdout.text !== 'string' || v.stdout.text.length > 4 * 1024 * 1024) throw new Error('Invalid response length')
+        result = JSON.parse(v.stdout.text)
+        if (!result || result.validatorVersion !== '0.4.0' || result.kind !== 'narration' || typeof result.passed !== 'boolean') throw new Error('Unsupported response shape')
+      } catch {
+        return { ok: false, recovered: false, readOnly: true, notAGate: true, nextAction: 'report_actual_host_failure',
+          hostFailure: { ...recoveryProbeFailure(out, callId), category: 'invalid-validator-response',
+            message: 'Expected bounded narration-validator JSON; returned data did not match that contract.' },
+          message: 'This is a validator-response error, not missing user authorization. Preserve the original run and report this exact call; no raw-shell fallback or repeated unchanged recovery.', status: engine.status(id) }
+      }
     } finally { pending.delete(callId) }
     const binding = result.bindings?.[result.manifestPath]
     const proof = result.passed && result.status === 'pass' && result.manifestPath === path &&
@@ -121,7 +152,7 @@ export function createRuntimeRecovery(ctx, engine, ready) {
       run.stageEpoch = (run.stageEpoch ?? 0) + 1
       // Keep last failure honest, only mark the adapter repair. Normal submit is still required.
       if (run.lastGate) run.lastGate.recovery = { code: plan.code, target: run.stageId, exhausted: false, runtimeFixed: true,
-        instruction: 'Continue the SAME stage with the canonical manifest. Do not regenerate unchanged assets or preapprove the gate.' }
+        instruction: 'Continue this stage with the canonical manifest. Prior failures and budgets remain recorded; nothing has been accepted yet.' }
       await engine.save()
       return { ok: true, recovered: true, notAGate: true, status: engine.status(id), canonicalManifest: path,
         nextAction: 'execute_current_stage', message: 'Plugin incident recovered in the original run. Task, revisions, budgets and files retained; no gate was passed, no new experiment was created. Continue without asking the user to clear/cancel/restart.' }

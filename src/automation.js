@@ -1,7 +1,7 @@
 import { isVideoTask, mentionsSource } from './intake-policy.js'
 import { reviewFeedback } from './run-control.js'
 /** Public DSH pre-step adapter. SDK message construction is supplied by the Host entry. */
-export function installAutoRouting(ctx, engine, router, { ready = async () => {}, createMessage, onError = console.error } = {}) {
+export function installAutoRouting(ctx, engine, router, { ready = async () => {}, createMessage, onError = console.error, allowsControl = () => false } = {}) {
   if (typeof createMessage !== 'function') throw new Error('createMessage is required')
   const seenByAgent = new WeakMap()
   const notice = text => createMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-playbook' } })
@@ -28,14 +28,29 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
       signal?.throwIfAborted()
       for (const message of fresh) seen.add(message.id ?? message)
       while (seen.size > 64) seen.delete(seen.values().next().value)
+      engine.noteCaller?.({ agent })
       const existing = engine.status(id), feedback = reviewFeedback(raw)
-      if (existing.run && feedback === 'reject' && ['completed', 'awaiting_review', 'accepted', 'failed'].includes(existing.run.state)) {
+      if (!existing.runtimeRecovery && existing.run && feedback === 'reject' && ['completed', 'awaiting_review', 'accepted', 'failed'].includes(existing.run.state)) {
         const status = await engine.requestRevision(id, raw, { signal, messageId: String(fresh.at(-1).id) })
         return { ...downstream, messages: [...downstream.messages, notice(`原交付被否决：已进入同一 run 的 revision ${status.run.revision}，不得新开审核流程丢失原任务。\n${status.instruction}`)] }
       }
       if (existing.run?.state === 'awaiting_review' && feedback === 'accept') {
         await engine.accept(id, { signal, messageId: String(fresh.at(-1).id) })
         return { ...downstream, messages: [...downstream.messages, notice('用户明确验收通过，已记录 accepted；不是模型自评。')] }
+      }
+      // A failed run still owns this task. Do not turn a continuation into an
+      // intake whose guard then blocks the run's own read-only recovery probe.
+      if (existing.runtimeRecovery || existing.run?.state === 'failed') {
+        const action = existing.runtimeRecovery ? 'recover' : 'repair'
+        const instruction = existing.runtimeRecovery
+          ? existing.runtimeRecovery.message
+          : '先查看失败证据，再通过 repair 指定原流程中的恢复阶段和具体诊断；保留原预算，不自动新开任务。'
+        return { ...downstream, messages: [...downstream.messages, notice(
+          `当前任务仍归属 run ${existing.run.id}，不是一次新接单。\n${instruction}\n`
+          + `先调用 playbook(action="${action}") 的原任务恢复入口（repair 需 stage_id、note）。`
+          + '不要要求用户再次授权 SOP 外制作、清空状态或修改宿主来解决插件内部故障。'
+          + '若真实宿主权限仍拒绝，报告具体 callId、错误码与原因；不得绕过或把技术检查失败说成权限不足。'
+        )] }
       }
       // Clarification and additional requirements belong to the current run.
       if (engine.attachedRun(id)) return downstream
@@ -65,5 +80,7 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
       return { ...downstream, messages: [...downstream.messages, notice(`自动 SOP 未启动：${error?.message ?? error}。不得声称流程正在执行；先告知用户这个限制。`)] }
     }
   })
-  ctx.tools.guard(exec => exec.agent?.id ? router.guard(String(exec.agent.id), exec.name) : undefined)
+  // Only plugin-owned, exact registered control calls are exempt from intake.
+  // Other plugin guards and the Host's permissions still run normally.
+  ctx.tools.guard(exec => allowsControl(exec) ? undefined : exec.agent?.id ? router.guard(String(exec.agent.id), exec.name) : undefined)
 }

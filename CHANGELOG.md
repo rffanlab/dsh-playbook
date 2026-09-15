@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2
+
+- Keep failed-run continuations on the recovery path instead of creating pending intake.
+- Share exact control-dispatch recognition across plugin run/intake guards; preserve external denials.
+- Return actual recovery call failures and retain explicit failure actions in compact responses.
+- Expose runtimePluginVersion separately from pinned SOP version.
+- Test user pre-step → all guards → recovery → real Python checks; no gate or budget relaxation.
+
 ## 0.7.1
 
 - Resolve absolute, session-prefixed and run-relative manifest paths once; retain cross-run/traversal rejection.

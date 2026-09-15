@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path'
 import { BUILTIN_PLAYBOOKS } from './builtins.js'
 import { loadPlaybooksFromDirectory } from './catalog.js'
 import { WorkflowEngine as PlaybookEngine } from './workflow-ux.js'
-import { usableController } from './controller-ux.js'
+import { usableController, PLUGIN_VERSION } from './controller-ux.js'
 import { createMediaDiagnostics } from './media-diagnostics.js'
 import { createIsolationManager } from './host-isolation.js'
 import { PlaybookRouter } from './routing.js'
@@ -55,6 +55,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   const diagnostics = createMediaDiagnostics(ctx, engine)
   ctx.tools.guard(isolation.guard)
   const recovery = createRuntimeRecovery(ctx, engine, ready)
+  const allowsControl = exec => isReportWrite(exec, pendingWrites) || isolation.isPreparation(exec) || diagnostics.allows(exec) || recovery.allows(exec)
   ctx.tools.register(define(usableController(recovery.wrap(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects))), engine, diagnostics)))
   const basePolicy = [
     'Playbook execution policy:',
@@ -83,7 +84,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     const enabled = router.view(id).enabled
     return `${basePolicy}\nAutomatic routing: ${enabled ? 'on' : 'off; do not start a SOP unless explicitly requested'}\n${enabled ? engine.listPlaybooks().map(p => `${p.id}: ${p.name}`).join('\n') : ''}`
   } })
-  ctx.tools.guard(exec => (isReportWrite(exec, pendingWrites) || isolation.isPreparation(exec) || diagnostics.allows(exec) || recovery.allows(exec)) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
+  ctx.tools.guard(exec => allowsControl(exec) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
   const callScopes = new Map()
   ctx.on('tools/pre-execute', (exec, next) => {
     engine.noteCaller(exec)
@@ -100,7 +101,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
       .catch(error => console.error(`[dsh-playbook] observation failed: ${error?.message ?? error}`))
   })
   ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); recovery.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
-  installAutoRouting(ctx, engine, router, { ready, createMessage: message })
+  installAutoRouting(ctx, engine, router, { ready, createMessage: message, allowsControl })
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({
       name: 'playbook', description: 'SOP selection and current-session control',
@@ -148,7 +149,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
           if (op === 'cancel') { const status = await engine.cancel(id, rest.join(' ') || 'cancelled by user', { signal: invocation.signal }); router.clear(id); return success(conciseStatus(status)) }
           if (op === 'status' || op === 'show') {
             const status = engine.status(id)
-            return success(rest[0] === 'json' ? { ...status, routing: router.view(id) } : conciseStatus(status))
+            return success(rest[0] === 'json' ? { ...status, runtimePluginVersion: PLUGIN_VERSION, routing: router.view(id) } : conciseStatus(status))
           }
           throw new Error('usage: /playbook [project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|accept|cancel|reload]')
         } catch (error) { return { kind: 'error', text: error?.message ?? String(error) } }

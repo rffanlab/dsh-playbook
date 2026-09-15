@@ -1,6 +1,6 @@
 {
   "name": "dsh-playbook",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Expert playbook engine with executable stages, quality gates, retries, branching, and tool policy for DeepSeek Harness",
   "type": "module",
   "main": "./src/plugin.js",

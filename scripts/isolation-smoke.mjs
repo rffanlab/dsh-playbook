@@ -64,6 +64,12 @@ try {
   held.state='failed';held.blocker=null;held.finishedAt=new Date().toISOString();held.lastGate={stageId:'script',passed:false,
     failures:[`narration: Missing artifact: ${relativeManifest}`],recovery:{code:'manifest',exhausted:true}}
   held.recoveryCounts={'0:script:manifest':3}
+  // The user continuation must pass through pre-step before recovery, not just
+  // a direct recovery call: this was the missing integration path in 0.7.1.
+  const continuation={id:'continue-current-v3',source:{kind:'user'},content:[{type:'text',text:'继续生成 v3，保留文稿与素材。'}]}
+  const resumedStep=await handlers.get('agent/pre-step')({agent:b,signal,messages:[continuation]},async()=>({kind:'enter',messages:[continuation]}))
+  assert.match(resumedStep.messages.at(-1).content[0].text,/不是一次新接单/)
+  assert.equal((await call(b,{action:'status'})).routing.pending,false)
   const recovered=await call(b,{action:'recover'})
   assert.equal(recovered.recovered,true,JSON.stringify(recovered));assert.equal(engine.runs.get('b').id,oldId)
   assert.deepEqual(engine.runs.get('b').history.slice(0,oldHistory.length),oldHistory)

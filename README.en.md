@@ -4,6 +4,10 @@
 
 **Give a task, read its sources, choose a project SOP, execute through evidence gates.**
 
+## 0.7.2: recovery dispatch after continuation
+
+Failed-task continuation no longer creates competing intake. Exact internal recovery calls pass this plugin's intake guard while external Host policy remains enforced. Failures preserve call IDs/codes and do not become a retry loop or an off-SOP approval request. See [recovery dispatch](docs/RECOVERY-DISPATCH.en.md). `runtimePluginVersion` identifies the loaded patch separately from the pinned SOP.
+
 ## 0.7.1: continue without clearing a run
 
 Fixes duplicated manifest path bases and adds narrowly verified same-run incident recovery without resetting history or budgets. Recorded pre-isolation revisions have an explicit compatibility path. Intake can resolve actual source_paths instead of copied opaque call IDs. Approved methods and quality gates remain unchanged.

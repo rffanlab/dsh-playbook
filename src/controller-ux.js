@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
 import { mediaWarnings } from './media-checks.js'
 /** Model-facing ergonomics. Full durable state stays in the engine and explicit reports. */
+export const PLUGIN_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 const copy = value => JSON.parse(JSON.stringify(value))
+const stamped = value => copy({ ...value, runtimePluginVersion: PLUGIN_VERSION })
 const clip = (value, size = 600) => {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? null)
   return text.length > size ? text.slice(0, size) + ' [truncated; detail=full for original]' : text
@@ -64,7 +67,7 @@ export function usableController(definition, engine, { diagnose } = {}) {
       if (args.action === 'diagnose') {
         await definition.execute({action:'status'}, exec) // normal hydration/caller identity
         if (!diagnose) throw new Error('Read-only media diagnostics unavailable in this Host; no raw-shell fallback')
-        return copy(await diagnose(exec, {full: args.detail === 'full'}))
+        return stamped(await diagnose(exec, {full: args.detail === 'full'}))
       }
       if (['repair','block'].includes(args.action) && (typeof args.note !== 'string' || args.note.trim().length < 8)) {
         return {ok:false,error:{code:'MISSING_DIAGNOSIS',message:'Use note or diagnosis with the concrete fault; neither was provided with enough detail.'},
@@ -86,13 +89,14 @@ export function usableController(definition, engine, { diagnose } = {}) {
       }
       const advisories = mediaWarnings(out.validation, engine.runs.get(id)?.previousCandidate)
       if (advisories.length) out.advisories = advisories
-      if (args.detail === 'full') return copy({...out,...(corrections.length?{argumentCorrections:corrections}:{})})
+      if (args.detail === 'full') return stamped({...out,...(corrections.length?{argumentCorrections:corrections}:{})})
       const result = {...out}
       if (result.status) result.status = compactStatus(result.status)
       if (result.validation) result.validation = compactValidation(result.validation)
       if (result.message?.includes('\n')) result.message = result.message.split('\n')[0] // stage is already in status
-      if (result.status?.lastGate?.recovery) result.nextAction = result.status.lastGate.recovery.exhausted ? 'report_recovery_limit' : 'fix_indicated_dependency'
-      if (result.status?.runtimeRecovery) result.nextAction = 'recover'
+      // An explicit failed probe result must not be rewritten into a retry loop.
+      if (result.ok !== false && result.status?.lastGate?.recovery) result.nextAction = result.status.lastGate.recovery.exhausted ? 'report_recovery_limit' : 'fix_indicated_dependency'
+      if (result.ok !== false && result.status?.runtimeRecovery) result.nextAction = 'recover'
       if (result.recovered) result.nextAction = 'execute_current_stage'
       if (result.report) {
         const r=result.report
@@ -102,7 +106,7 @@ export function usableController(definition, engine, { diagnose } = {}) {
         if (result.markdown) result.markdown='# Playbook system summary\n\n```json\n'+JSON.stringify(result.report,null,2)+'\n```\n'
       }
       if (corrections.length) result.argumentCorrections=corrections
-      return copy(result)
+      return stamped(result)
     },
   }
 }
