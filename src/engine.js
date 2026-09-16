@@ -162,6 +162,7 @@ export class PlaybookEngine {
       machineEvidence: clone(run.machineEvidence ?? {}),
       previousCandidate: clone(run.previousCandidate ?? null),
       revisionFeedback: clone(run.revisions?.at(-1) ?? null),
+      reviewControl: control.reviewControl(run),
       blocker: clone(run.blocker ?? null),
       run: {
         id: run.id,

@@ -12,7 +12,6 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
     const { agent, signal } = payload
     if (!agent?.id || agent.session?.header?.parentSession) return downstream
     const id = String(agent.id)
-    if (!router.view(id).enabled) return downstream
     const admitted = new Set(downstream.messages.map(message => message.id))
     const users = (payload.messages ?? []).filter(message => message.source?.kind === 'user' && admitted.has(message.id))
     if (!users.length) return downstream
@@ -23,21 +22,39 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
     const raw = fresh.flatMap(message => (message.content ?? []).filter(block => block.type === 'text' && typeof block.text === 'string').map(block => block.text)).join('\n').trim()
     if (!raw || raw.startsWith('/')) return downstream
     signal?.throwIfAborted()
+    let reviewOperation = null
+    // Remember only successful processing. A failed durable write must be
+    // retryable with the same admitted user event rather than silently ignored.
+    const finish = output => {
+      for (const message of fresh) seen.add(message.id ?? message)
+      while (seen.size > 64) seen.delete(seen.values().next().value)
+      return output
+    }
     try {
       await ready()
       signal?.throwIfAborted()
-      for (const message of fresh) seen.add(message.id ?? message)
-      while (seen.size > 64) seen.delete(seen.values().next().value)
       engine.noteCaller?.({ agent })
       const existing = engine.status(id), feedback = reviewFeedback(raw)
       if (!existing.runtimeRecovery && existing.run && feedback === 'reject' && ['completed', 'awaiting_review', 'accepted', 'failed'].includes(existing.run.state)) {
-        const status = await engine.requestRevision(id, raw, { signal, messageId: String(fresh.at(-1).id) })
-        return { ...downstream, messages: [...downstream.messages, notice(`原交付被否决：已进入同一 run 的 revision ${status.run.revision}，不得新开审核流程丢失原任务。\n${status.instruction}`)] }
+        reviewOperation = 'reject'
+        const status = await engine.requestRevision(id, raw, { signal,
+          messageId: fresh.at(-1).id == null ? undefined : String(fresh.at(-1).id),
+          expectedReviewTarget: existing.reviewControl?.target })
+        const summary = status.active
+          ? `原交付被否决：已进入同一 run 的 revision ${status.run.revision}；聊天退回已登记，不再索要 UI 点击或额外授权。`
+          : '该用户评审消息已处理；不重复否决后续候选，当前状态保持不变。'
+        return finish({ ...downstream, messages: [...downstream.messages, notice(`${summary}\nrun=${status.run.id}; state=${status.run.state}; stage=${status.run.stageId}\n不得取消/清空/新开任务；仅按本次反馈修正，保留未要求修改的内容。\n${status.instruction}`)] })
       }
       if (existing.run?.state === 'awaiting_review' && feedback === 'accept') {
-        await engine.accept(id, { signal, messageId: String(fresh.at(-1).id) })
-        return { ...downstream, messages: [...downstream.messages, notice('用户明确验收通过，已记录 accepted；不是模型自评。')] }
+        reviewOperation = 'accept'
+        const status = await engine.accept(id, { signal,
+          messageId: fresh.at(-1).id == null ? undefined : String(fresh.at(-1).id),
+          expectedReviewTarget: existing.reviewControl?.target })
+        return finish({ ...downstream, messages: [...downstream.messages, notice(`用户明确验收通过，已记录 accepted；不是模型自评。run=${status.run.id}`)] })
       }
+      // 'auto off' disables NEW task routing, not an explicit human decision
+      // about a candidate which was already submitted for review.
+      if (!router.view(id).enabled) return finish(downstream)
       // A failed run still owns this task. Do not turn a continuation into an
       // intake whose guard then blocks the run's own read-only recovery probe.
       if (existing.runtimeRecovery || existing.run?.state === 'failed') {
@@ -45,20 +62,20 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
         const instruction = existing.runtimeRecovery
           ? existing.runtimeRecovery.message
           : '先查看失败证据，再通过 repair 指定原流程中的恢复阶段和具体诊断；保留原预算，不自动新开任务。'
-        return { ...downstream, messages: [...downstream.messages, notice(
+        return finish({ ...downstream, messages: [...downstream.messages, notice(
           `当前任务仍归属 run ${existing.run.id}，不是一次新接单。\n${instruction}\n`
           + `先调用 playbook(action="${action}") 的原任务恢复入口（repair 需 stage_id、note）。`
           + '不要要求用户再次授权 SOP 外制作、清空状态或修改宿主来解决插件内部故障。'
           + '若真实宿主权限仍拒绝，报告具体 callId、错误码与原因；不得绕过或把技术检查失败说成权限不足。'
-        )] }
+        )] })
       }
       // Clarification and additional requirements belong to the current run.
-      if (engine.attachedRun(id)) return downstream
+      if (engine.attachedRun(id)) return finish(downstream)
       const oversized = raw.length > 24000
       const task = oversized ? `${raw.slice(0, 6000)}\n[路由摘要截断；完整任务仍在原用户消息中]\n${raw.slice(-6000)}` : raw
-      if (router.recommend(task).kind === 'conversation' && !router.view(id).pending) return downstream
+      if (router.recommend(task).kind === 'conversation' && !router.view(id).pending) return finish(downstream)
       const decision = router.remember(id, task)
-      if (decision.kind === 'conversation') return downstream
+      if (decision.kind === 'conversation') return finish(downstream)
       let instruction
       const documentAttached = fresh.some(m => (m.content ?? []).some(b => !['text','image','audio','video'].includes(b.type)))
       const requiresIntake = isVideoTask(raw) || mentionsSource(raw) || documentAttached
@@ -73,9 +90,17 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
           + '只有缺少会改变执行结果的目标/输入/范围时才追问；不要复问已有信息。无专用流程时明确说明并选择 task-intake。复合任务先界定先后顺序，不声称已并行跑完多个 SOP。\n'
           + `规则候选（不是命令，也不是概率）：${JSON.stringify(decision.candidates)}\n可用目录：\n${summaries}`
       }
-      return { ...downstream, messages: [...downstream.messages, notice(instruction)] }
+      return finish({ ...downstream, messages: [...downstream.messages, notice(instruction)] })
     } catch (error) {
       if (signal?.aborted) throw error
+      if (reviewOperation) {
+        onError(`[dsh-playbook] ${reviewOperation} not registered: ${error?.message ?? error}`)
+        const state = engine.status(id)
+        return { ...downstream, messages: [...downstream.messages, notice(
+          `用户评审未登记成功：${error?.message ?? error}。run=${state.run?.id ?? 'none'}; state=${state.run?.state ?? 'none'}; revision=${state.run?.revision ?? 0}。`
+          + '这是评审状态写入或目标冲突，不是用户没有授权。不得改称 UI 专用动作或建议清空/取消/新建。保留当前任务并报告实际错误。'
+        )] }
+      }
       onError(`[dsh-playbook] automatic routing unavailable: ${error?.message ?? error}`)
       return { ...downstream, messages: [...downstream.messages, notice(`自动 SOP 未启动：${error?.message ?? error}。不得声称流程正在执行；先告知用户这个限制。`)] }
     }

@@ -73,6 +73,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     '- Plugin path/legacy incidents: automatically use recover/workspace/repair and keep the same run. Never request clearing state, cancellation, a new conversation or weaker validators as the default workaround. Intake source_paths resolves real observed reads; do not invent call IDs.',
     '- Technical/format failure: use action=repair with a specific earlier stage and concrete diagnosis within the preserved budget. Missing resources/permission: block and ask. Never cancel/start or work informally to evade a failed SOP.',
     '- Fixed timeline lengths, all-new covers, ASR absence and cosmetic imperfections are not reasons for blind rerendering. Dialogue audio drives video timing; quote overlays and shot cuts need not last as long as speech segments. Diagnose before deciding what to repair.',
+    '- Direct user text such as “拒绝候选” is a review operation; it never requires a special UI event. If review was not registered, report the real state/error and existing /playbook revise entry, not an invented button or cancel/new-run workaround.',
     '- Media candidates are not user acceptance. User rejection reopens the same run. Only an explicit direct-user approval can set accepted. Report facts come from action=report, never a prewritten success story.',
     '- SOPs are starter templates, not guaranteed optimal methods. Tool success is not proof of test exit code zero or semantic correctness.',
     '- A SOP never expands permissions. External publication, account actions, destructive operations and approvals still follow the user request and Host policy.',
@@ -105,7 +106,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({
       name: 'playbook', description: 'SOP selection and current-session control',
-      input: { hint: '[project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|accept|cancel|reload]' },
+      input: { hint: '[project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|reject|review|accept|cancel|reload]' },
       handler: async invocation => {
         try {
           engine.noteCaller(invocation)
@@ -144,14 +145,23 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
           }
           if (op === 'resume') return success(conciseStatus(await engine.resume(id, { signal: invocation.signal })))
           if (op === 'report') return success(rest[0] === 'markdown' ? reportMarkdown(engine.report(id)) : engine.report(id))
-          if (op === 'revise') return success(conciseStatus(await engine.requestRevision(id, rest.join(' ') || 'User requested revision of the last deliverable.', { signal: invocation.signal })))
+          if (op === 'review') {
+            const [decision, target, ...reason] = rest
+            if (!['reject','accept'].includes(decision) || !/^[a-f0-9]{64}$/.test(target ?? '')) throw new Error('usage: /playbook review reject|accept <displayed-candidate-target> [feedback]; ordinary chat can use /playbook revise')
+            const options = { signal: invocation.signal, expectedReviewTarget: target }
+            const status = decision === 'reject'
+              ? await engine.requestRevision(id, reason.join(' ') || '用户在 Playbook 面板拒绝当前候选；继续处理已有的审核意见。', options)
+              : await engine.accept(id, options)
+            return success(conciseStatus(status))
+          }
+          if (op === 'revise' || op === 'reject') return success(conciseStatus(await engine.requestRevision(id, rest.join(' ') || '用户明确拒绝当前候选；在原任务中诊断并返修，保留已确认要求。', { signal: invocation.signal })))
           if (op === 'accept') return success(conciseStatus(await engine.accept(id, { signal: invocation.signal })))
           if (op === 'cancel') { const status = await engine.cancel(id, rest.join(' ') || 'cancelled by user', { signal: invocation.signal }); router.clear(id); return success(conciseStatus(status)) }
           if (op === 'status' || op === 'show') {
             const status = engine.status(id)
             return success(rest[0] === 'json' ? { ...status, runtimePluginVersion: PLUGIN_VERSION, routing: router.view(id) } : conciseStatus(status))
           }
-          throw new Error('usage: /playbook [project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|accept|cancel|reload]')
+          throw new Error('usage: /playbook [project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|reject|review|accept|cancel|reload]')
         } catch (error) { return { kind: 'error', text: error?.message ?? String(error) } }
       },
     })

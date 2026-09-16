@@ -38,6 +38,7 @@ export function compactStatus(s) {
       calls: row.calls, successes: row.successes, failures: row.failures, lastCallId: row.lastCallId,
       receipts: (row.receipts ?? []).slice(-4),
     }])),
+    reviewControl: s.reviewControl,
     revisionFeedback: s.revisionFeedback ? clip(s.revisionFeedback, 1200) : null,
     detail: 'compact; use detail=full only to read prior evidence or full feedback',
   }
@@ -82,6 +83,10 @@ export function usableController(definition, engine, { diagnose } = {}) {
       let out
       try { out = await definition.execute(args, exec) }
       catch (error) {
+        if (error.code === 'USER_REVIEW_REQUIRED') return stamped({ok:false,
+          error:{code:error.code,message:error.message},status:compactStatus(engine.status(id)),
+          nextAction:'await_direct_user_review',
+          message:'候选尚未登记用户退回。聊天文字可触发评审，不必点击 UI；不要用 recover/取消/清空替代评审。若用户已明确退回仍未登记，报告运行版本、状态和实际错误。'})
         if (error.code !== 'SOURCE_READ_REFS') throw error
         return {ok:false,error:{code:error.code,message:error.message},availableReads:error.availableReads,
           nextAction:'retry_intake_with_observed_source_paths',expected:{action:'intake',project_id:args.project_id,requirements:args.requirements,source_paths:['<choose a task-source path from availableReads>']},

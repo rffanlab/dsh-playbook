@@ -4,6 +4,10 @@
 
 **Give a task, read its sources, choose a project SOP, execute through evidence gates.**
 
+## 0.7.3: candidate review works directly in chat
+
+Direct “拒绝候选” now enters the original run revision. The optional settings-panel button uses the same review path and checks the displayed session/candidate. No clearing, cancellation or invented mandatory UI action. [Review entrances and tests](docs/CANDIDATE-REVIEW.en.md).
+
 ## 0.7.2: recovery dispatch after continuation
 
 Failed-task continuation no longer creates competing intake. Exact internal recovery calls pass this plugin's intake guard while external Host policy remains enforced. Failures preserve call IDs/codes and do not become a retry loop or an off-SOP approval request. See [recovery dispatch](docs/RECOVERY-DISPATCH.en.md). `runtimePluginVersion` identifies the loaded patch separately from the pinned SOP.

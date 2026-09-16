@@ -86,8 +86,14 @@ export function createRuntimeRecovery(ctx, engine, ready) {
   async function recover(exec) {
     await ready(); engine.noteCaller(exec); await engine.queue
     const id = String(exec.agent?.id ?? ''), plan = runtimeRecoveryPlan(engine, id), run = engine.runs.get(id)
-    if (!plan) return { ok: true, recovered: false, status: engine.status(id), nextAction: 'use_existing_stage_or_controlled_repair',
-      message: 'No eligible plugin incident. No state/permission/budget was reset; do not cancel or replace the SOP to bypass checks.' }
+    if (!plan) {
+      const status = engine.status(id)
+      return { ok: true, recovered: false, status,
+        nextAction: status.run?.state === 'awaiting_review' ? 'await_direct_user_review' : 'use_existing_stage_or_controlled_repair',
+        message: status.run?.state === 'awaiting_review'
+          ? 'Candidate awaits direct user review, not runtime recovery. Chat “拒绝候选” is supported; UI is optional. Do not cancel, clear or create a new run to manufacture rejection.'
+          : 'No eligible plugin incident. No state/permission/budget was reset; do not cancel or replace the SOP to bypass checks.' }
+    }
     if (inflight.has(run.id)) return inflight.get(run.id)
     const promise = perform(exec, id, clone(run), plan)
     inflight.set(run.id, promise)

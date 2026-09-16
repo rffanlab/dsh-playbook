@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.3
+
+- Recognize direct candidate rejection (including 拒绝候选) without requiring a UI event; auto-intake off does not disable review of an existing candidate.
+- Persist same-run review feedback before acknowledgement; deduplicate redelivery and retain retries after a state-write failure.
+- Expose supported chat/command review entrances in status and controller errors; repair/recover cannot manufacture a human review.
+- Label the actual settings panel button 拒绝候选, add optional feedback and refresh pending candidates. UI commands bind the viewed session and candidate, rejecting stale clicks.
+- Add complete Host review regressions and a React/DOM-to-Host interaction smoke. Existing snapshots, checks and budgets remain.
+
 ## 0.7.2
 
 - Keep failed-run continuations on the recovery path instead of creating pending intake.
