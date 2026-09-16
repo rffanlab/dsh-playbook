@@ -100,6 +100,21 @@ try {
   assert.equal(engine.status('a').run.state,'active')
   assert.equal(recorded.some(row=>/\/playbook (?:cancel|start)\b/.test(row.raw)),false)
   console.log('PASS: exact-current-candidate acceptance; review never cancelled/recreated a task')
+
+  // A remains in the original revision. Produce and reject more candidates via
+  // the actual button, exceeding its old maxRevisions=3 and lifetime repair cap.
+  selected='a'
+  for(let expected=2;expected<=5;expected++) {
+    await engine.repair('a','produce','Synthetic user-directed correction without replacing the run.')
+    await engine.submit('a',{stageId:'produce',evidence:{artifact:'UI candidate '+expected}})
+    await engine.submit('a',{stageId:'qa',evidence:{checked:'UI checked '+expected}})
+    await click('刷新');await click('拒绝候选')
+    assert.equal(engine.status('a').run.id,originalId)
+    assert.equal(engine.status('a').run.revision,expected)
+    assert.equal(engine.status('a').run.state,'active')
+  }
+  assert.equal(recorded.some(row=>/\/playbook (?:cancel|start)\b/.test(row.raw)),false)
+  console.log('PASS: actual panel continues past legacy human cap and lifetime repair totals, preserving original Run')
 } finally {
   await act(async()=>root.unmount());dom.window.close()
   await engine.queue;await rm(workspace,{recursive:true,force:true})

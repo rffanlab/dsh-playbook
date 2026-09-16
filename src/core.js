@@ -295,8 +295,10 @@ function normalizeDelivery(value, ids) {
   if (value.review !== true || !ids.has(value.revisionStage)) fail('delivery requires review=true and a valid revisionStage')
   const repairStages = asStringArray(value.repairStages, 'delivery.repairStages') ?? []
   if (!repairStages.length || repairStages.some(id => !ids.has(id))) fail('delivery repairStages must reference real stages')
-  const maxRevisions = value.maxRevisions ?? 2, maxSelfRepairs = value.maxSelfRepairs ?? 3
-  for (const v of [maxRevisions, maxSelfRepairs]) if (!Number.isSafeInteger(v) || v < 1 || v > 5) fail('delivery budgets must be integers 1..5')
+  // Deprecated human cap is compatibility metadata only; null means no cap.
+  const maxRevisions = value.maxRevisions ?? null, maxSelfRepairs = value.maxSelfRepairs ?? 3
+  if (maxRevisions !== null && (!Number.isSafeInteger(maxRevisions) || maxRevisions < 1)) fail('legacy delivery.maxRevisions must be null or a positive integer')
+  if (!Number.isSafeInteger(maxSelfRepairs) || maxSelfRepairs < 1 || maxSelfRepairs > 5) fail('delivery.maxSelfRepairs must be an integer 1..5')
   return { review: true, revisionStage: value.revisionStage, repairStages, maxRevisions, maxSelfRepairs }
 }
 

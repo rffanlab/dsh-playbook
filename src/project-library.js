@@ -17,13 +17,19 @@ function strings(value, label, required = true) {
   if (!Array.isArray(value) || value.length > 40 || (required && !value.length)) throw new Error(`${label} must be an array of ${required ? '1' : '0'}..40 strings`)
   return [...new Set(value.map(item => string(item, label))) ]
 }
+// maxRevisions is deprecated compatibility metadata, not a quality/automatic-work rule.
+function deliveryContract(value) {
+  if (!value) return value
+  const { maxRevisions, ...contract } = value
+  return contract
+}
 function own(object, key) { return Object.hasOwn(object ?? {}, key) ? object[key] : undefined }
 
 /** Conservative static comparison. Text rewrites need review; semantic equivalence is not guessed. */
 export function protectedChanges(base, proposed, baseRules = [], nextRules = []) {
   const changes = []
   if (base.initialStage !== proposed.initialStage) changes.push('initialStage changed')
-  if (!isDeepStrictEqual(base.delivery, proposed.delivery)) changes.push('delivery/revision policy changed')
+  if (!isDeepStrictEqual(deliveryContract(base.delivery), deliveryContract(proposed.delivery))) changes.push('delivery/revision policy changed')
   for (const s of base.stages) {
     const n = proposed.stages.find(row => row.id === s.id)
     if (!n) { changes.push(`removed stage: ${s.id}`); continue }

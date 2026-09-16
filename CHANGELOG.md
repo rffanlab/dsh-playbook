@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.4
+
+- Remove the hard cap on explicit human revisions, including legacy pinned maxRevisions=2 runs.
+- Share a single per-user-instruction budget calculation across submit/repair/dependency and runtime recovery; keep lifetime counts.
+- Add a trusted direct-user continuation for exhausted automatic cycles, without new runs, weakened gates or model reset authority.
+- Keep durable deduplication beyond the short feedback-ID cache, rollback and stale-target checks.
+- Ignore only deprecated maxRevisions metadata in project-method comparison; retain protected quality and tool rules.
+- Expose compact and full workBudget reporting and add full Host/legacy regression coverage.
+
 ## 0.7.3
 
 - Recognize direct candidate rejection (including 拒绝候选) without requiring a UI event; auto-intake off does not disable review of an existing candidate.

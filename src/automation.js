@@ -1,3 +1,4 @@
+import { mayContinueWork, isWorkContinuation } from './work-budget.js'
 import { isVideoTask, mentionsSource } from './intake-policy.js'
 import { reviewFeedback } from './run-control.js'
 /** Public DSH pre-step adapter. SDK message construction is supplied by the Host entry. */
@@ -51,6 +52,18 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
           messageId: fresh.at(-1).id == null ? undefined : String(fresh.at(-1).id),
           expectedReviewTarget: existing.reviewControl?.target })
         return finish({ ...downstream, messages: [...downstream.messages, notice(`用户明确验收通过，已记录 accepted；不是模型自评。run=${status.run.id}`)] })
+      }
+      // Explicit human continuation can renew an exhausted automatic allowance,
+      // without rejecting an awaiting candidate or turning it into a new Run.
+      if (mayContinueWork(engine, engine.runs.get(id)) && isWorkContinuation(raw)) {
+        reviewOperation = 'continue'
+        const status = await engine.continueWork(id, { signal,
+          messageId: fresh.at(-1).id == null ? undefined : String(fresh.at(-1).id),
+          expectedRunId: existing.run.id, expectedEpoch: existing.run.stageEpoch })
+        return finish({ ...downstream, messages: [...downstream.messages, notice(
+          (status.workBudget.cycle > existing.workBudget.cycle
+            ? `已登记用户继续原任务：同一 run ${status.run.id}，当前阶段 ${status.run.stageId}。本轮自动执行额度可继续；历史失败、累计消耗及全部质量检查保留，不取消/新建任务，不再次索要授权。`
+            : '该用户续做消息已经处理，未再次增加自动额度；保留当前实际状态。') + `\n${status.instruction}`)] })
       }
       // 'auto off' disables NEW task routing, not an explicit human decision
       // about a candidate which was already submitted for review.

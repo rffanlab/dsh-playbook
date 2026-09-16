@@ -1,3 +1,4 @@
+import { workBudget, automaticBudgetError, userEventSeen, mayContinueWork } from './work-budget.js'
 import { createHash } from 'node:crypto'
 /** Durable revision control and reports. No model-authored counts or grades. */
 const clone = value => structuredClone(value)
@@ -56,9 +57,9 @@ export async function repair(engine, sessionId, target, reason, { signal } = {})
       throw error
     }
     if (run.state === 'blocked' && run.blocker?.kind !== 'format') throw new Error('Missing prerequisites/permissions require the user to resolve and resume; technical repair cannot waive them')
-    if (run.history.filter(e => ['gate_passed', 'gate_failed'].includes(e.type)).length >= engine.maxSubmissions) throw new Error('Total gate budget exhausted; cannot reset it by repair')
-    const max = book.delivery?.maxSelfRepairs ?? 2
-    if ((run.selfRepairs ?? 0) >= max) throw new Error(`Self-repair budget ${max} exhausted; report the blocker to the user`)
+    const budget = workBudget(engine, run)
+    if (budget.submissions.exhausted) throw automaticBudgetError('submission', budget)
+    if (budget.selfRepairs.exhausted) throw automaticBudgetError('self-repair', budget)
     target ||= run.stageId
     const currentIndex = book.stages.findIndex(s => s.id === run.stageId), targetIndex = book.stages.findIndex(s => s.id === target)
     if (targetIndex < 0 || targetIndex > currentIndex) throw new Error('repair may only return to the same or an earlier stage')
@@ -79,11 +80,14 @@ export async function requestRevision(engine, sessionId, reason, { signal, messa
     const run = engine.runs.get(String(sessionId)), book = engine.playbookForRun(run)
     // A redelivered direct-user message must not reject a later candidate or
     // consume a second revision, even after a Host restart.
-    if (messageId && (run?.feedbackIds ?? []).includes(messageId)) return engine.status(sessionId)
+    if (userEventSeen(run, messageId)) return engine.status(sessionId)
     checkReviewTarget(run, expectedReviewTarget)
     if (!run || !book || !terminal.has(run.state) || run.state === 'cancelled') throw new Error('No completed/candidate/failed run to revise')
-    const revision = (run.revision ?? 0) + 1, max = book.delivery?.maxRevisions ?? 2
-    if (revision > max) throw new Error(`User revision budget ${max} reached; start a deliberate new task instead of hiding the old run`)
+    // A new explicit human request is not an autonomous retry. Legacy
+    // delivery.maxRevisions is retained in pinned snapshots, never used to veto it.
+    const revision = (run.revision ?? 0) + 1
+    if (!Number.isSafeInteger(revision)) throw new Error('Revision counter exceeds safe integer storage')
+    const baseline = workBudget(engine, run).lifetime
     const target = book.delivery?.revisionStage ?? (book.stages.find(s => s.id === 'qa')?.id ?? book.initialStage)
     const now = at(engine)
     run.previousCandidate = clone(run.candidates?.at(-1)?.artifacts ?? run.previousCandidate ?? null)
@@ -92,6 +96,7 @@ export async function requestRevision(engine, sessionId, reason, { signal, messa
     run.revisions.push({ revision, requestedAt: now, previousState: run.state, reason: String(reason).slice(0, 24000),
       previousCandidate: clone(run.previousCandidate) })
     run.revision = revision
+    if (run.lastGate?.recovery?.exhausted) run.lastGate.recovery.continuedByUser = true
     run.feedbackIds = [...(run.feedbackIds ?? []), ...(messageId ? [messageId] : [])].slice(-64)
     const start = book.stages.find(s => s.id === 'qa')?.id ?? target
     const invalidated = invalidate(run, book, start)
@@ -99,7 +104,29 @@ export async function requestRevision(engine, sessionId, reason, { signal, messa
     run.stageId = target; run.stageAttempt = 1; run.stageEpoch = (run.stageEpoch ?? 0) + 1
     run.observations = {}; run.formatRepairs = 0; run.updatedAt = now
     run.history.push({ type: 'human_review_rejected', at: now, revision, stageId: target,
-      reason: String(reason).slice(0, 24000), invalidated, messageId: messageId ?? null })
+      reason: String(reason).slice(0, 24000), invalidated, messageId: messageId ?? null,
+      automationBaseline: baseline })
+    await engine.save(); return engine.status(sessionId)
+  })
+}
+/** Host user-message/command entry only. This never approves a gate or changes the SOP. */
+export async function continueWork(engine, sessionId, { signal, messageId, expectedRunId, expectedEpoch } = {}) {
+  return engine.serialize(async () => {
+    signal?.throwIfAborted()
+    const run = engine.runs.get(String(sessionId))
+    if (userEventSeen(run, messageId)) return engine.status(sessionId)
+    if (expectedRunId !== undefined && (run?.id !== expectedRunId || run?.stageEpoch !== expectedEpoch))
+      throw new Error('CONTINUATION_TARGET_CHANGED: no different run/candidate was resumed')
+    if (!mayContinueWork(engine, run)) throw new Error('No exhausted automatic work cycle to continue; keep existing stage/review/permission controls')
+    const budget = workBudget(engine, run), now = at(engine), previousState = run.state
+    run.history.push({ type: 'human_work_continued', at: now, revision: run.revision ?? 0,
+      stageId: run.stageId, previousState, messageId: messageId ?? null, automationBaseline: budget.lifetime })
+    run.feedbackIds = [...(run.feedbackIds ?? []), ...(messageId ? [messageId] : [])].slice(-64)
+    run.state = 'active'; run.blocker = null; run.finishedAt = null; run.updatedAt = now
+    run.stageAttempt = 1; run.stageEpoch = (run.stageEpoch ?? 0) + 1
+    run.formatRepairs = 0; run.observations = {}
+    // Keep the failure and past exhausted marker, but don't mistake it for a new halt.
+    if (run.lastGate?.recovery?.exhausted) run.lastGate.recovery.continuedByUser = true
     await engine.save(); return engine.status(sessionId)
   })
 }
@@ -107,7 +134,7 @@ export async function accept(engine, sessionId, { signal, messageId, expectedRev
   return engine.serialize(async () => {
     signal?.throwIfAborted()
     const run = engine.runs.get(String(sessionId))
-    if (messageId && (run?.feedbackIds ?? []).includes(messageId)) return engine.status(sessionId)
+    if (userEventSeen(run, messageId)) return engine.status(sessionId)
     checkReviewTarget(run, expectedReviewTarget)
     if (run?.state !== 'awaiting_review') throw new Error('Only an awaiting-review candidate can be accepted')
     run.feedbackIds = [...(run.feedbackIds ?? []), ...(messageId ? [messageId] : [])].slice(-64)
@@ -127,6 +154,7 @@ export function report(engine, sessionId) {
     currentAcceptedStageCount: Object.keys(run.evidence ?? {}).length,
     gatesPassed: count('gate_passed'), gatesFailed: count('gate_failed'),
     formatRepairs: count('format_repair'), losslessShapeCorrections: count('evidence_shape_corrected'),
+    workBudget: workBudget(engine, run), humanContinuations: count('human_work_continued'),
     selfRepairs: run.selfRepairs ?? 0, humanReviewRejections: count('human_review_rejected'),
     humanReviewAcceptances: count('human_review_accepted'), revisions: run.revision ?? 0,
     validatorCalls: run.validatorCalls ?? 0, toolResultsObserved: run.toolResultsObserved ?? 0,

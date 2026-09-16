@@ -4,6 +4,10 @@
 
 **Give a task, read its sources, choose a project SOP, execute through evidence gates.**
 
+## 0.7.4: human revisions are not autonomous retries
+
+No fixed cap on explicit human revisions. Autonomous allowances are per user instruction while lifetime audit counts remain intact. Continue existing runs and approved methods without cancellation or recreation. See [human revisions and work budgets](docs/HUMAN-REVISION.en.md).
+
 ## 0.7.3: candidate review works directly in chat
 
 Direct “拒绝候选” now enters the original run revision. The optional settings-panel button uses the same review path and checks the displayed session/candidate. No clearing, cancellation or invented mandatory UI action. [Review entrances and tests](docs/CANDIDATE-REVIEW.en.md).

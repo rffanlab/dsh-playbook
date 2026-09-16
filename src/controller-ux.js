@@ -38,7 +38,7 @@ export function compactStatus(s) {
       calls: row.calls, successes: row.successes, failures: row.failures, lastCallId: row.lastCallId,
       receipts: (row.receipts ?? []).slice(-4),
     }])),
-    reviewControl: s.reviewControl,
+    reviewControl: s.reviewControl, workBudget: s.workBudget,
     revisionFeedback: s.revisionFeedback ? clip(s.revisionFeedback, 1200) : null,
     detail: 'compact; use detail=full only to read prior evidence or full feedback',
   }
@@ -83,6 +83,10 @@ export function usableController(definition, engine, { diagnose } = {}) {
       let out
       try { out = await definition.execute(args, exec) }
       catch (error) {
+        if (error.code === 'AUTOMATIC_WORK_BUDGET_EXHAUSTED') return stamped({ok:false,
+          error:{code:error.code,message:error.message},status:compactStatus(engine.status(id)),
+          nextAction:'report_bounded_work_progress',
+          message:'本次用户指令下的自动尝试额度耗尽，不是用户返修次数用完。保留原任务、累计历史和验收标准；说明已完成工作和真实阻碍，明确用户续做指令可在原任务开启下一轮，不要求清空或新建。'})
         if (error.code === 'USER_REVIEW_REQUIRED') return stamped({ok:false,
           error:{code:error.code,message:error.message},status:compactStatus(engine.status(id)),
           nextAction:'await_direct_user_review',
@@ -100,7 +104,7 @@ export function usableController(definition, engine, { diagnose } = {}) {
       if (result.validation) result.validation = compactValidation(result.validation)
       if (result.message?.includes('\n')) result.message = result.message.split('\n')[0] // stage is already in status
       // An explicit failed probe result must not be rewritten into a retry loop.
-      if (result.ok !== false && result.status?.lastGate?.recovery) result.nextAction = result.status.lastGate.recovery.exhausted ? 'report_recovery_limit' : 'fix_indicated_dependency'
+      if (result.ok !== false && result.status?.lastGate?.recovery && !result.status.lastGate.recovery.continuedByUser) result.nextAction = result.status.lastGate.recovery.exhausted ? 'report_recovery_limit' : 'fix_indicated_dependency'
       if (result.ok !== false && result.status?.runtimeRecovery) result.nextAction = 'recover'
       if (result.recovered) result.nextAction = 'execute_current_stage'
       if (result.report) {

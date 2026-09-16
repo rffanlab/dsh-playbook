@@ -1,3 +1,4 @@
+import { workBudget } from './work-budget.js'
 import * as control from './run-control.js'
 import { mediaIssues } from './media-checks.js'
 import { randomUUID } from 'node:crypto'
@@ -163,6 +164,7 @@ export class PlaybookEngine {
       previousCandidate: clone(run.previousCandidate ?? null),
       revisionFeedback: clone(run.revisions?.at(-1) ?? null),
       reviewControl: control.reviewControl(run),
+      workBudget: workBudget(this, run),
       blocker: clone(run.blocker ?? null),
       run: {
         id: run.id,
@@ -232,12 +234,12 @@ export class PlaybookEngine {
       if (stageId !== undefined && stageId !== stage.id) throw new Error(`stage mismatch: current=${stage.id}, submitted=${stageId}`)
       if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) throw new Error('evidence must be an object')
       const at = nowIso(this.clock)
-      const submissions = run.history.filter(event => event.type === 'gate_passed' || event.type === 'gate_failed').length
-      if (submissions >= this.maxSubmissions) {
+      const budget = workBudget(this, run)
+      if (budget.submissions.exhausted) {
         run.state = 'failed'
         run.finishedAt = at
         run.updatedAt = at
-        run.lastGate = { stageId: stage.id, attempt: run.stageAttempt, passed: false, failures: ['total submission budget exhausted'], at }
+        run.lastGate = { stageId: stage.id, attempt: run.stageAttempt, passed: false, failures: ['automatic submission budget for this user-directed cycle exhausted; retain this run and report progress, never cancel/recreate it'], code: 'AUTOMATIC_WORK_BUDGET_EXHAUSTED', at }
         run.history.push({ type: 'run_failed', at, stageId: stage.id, reason: 'submission_budget' })
         await this.save()
         return this.status(key)
@@ -381,6 +383,7 @@ export class PlaybookEngine {
   }
 
   repair(sessionId, target, reason, options) { return control.repair(this, sessionId, target, reason, options) }
+  continueWork(id, options) { return control.continueWork(this, id, options) }
   requestRevision(sessionId, reason, options) { return control.requestRevision(this, sessionId, reason, options) }
   accept(sessionId, options) { return control.accept(this, sessionId, options) }
   report(sessionId) { return control.report(this, sessionId) }

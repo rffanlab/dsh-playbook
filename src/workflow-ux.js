@@ -1,3 +1,4 @@
+import { workBudget } from './work-budget.js'
 import { runtimeRecoveryPlan } from './runtime-recovery.js'
 import { IsolatedPlaybookEngine } from './run-isolation.js'
 import { invalidate } from './run-control.js'
@@ -38,10 +39,11 @@ export class WorkflowEngine extends IsolatedPlaybookEngine {
           !(gate.issues ?? []).length || !gate.issues.every(i => i.kind === 'verification')) continue
       const book = this.playbookForRun(run), plan = recoveryFor(gate.stageId, gate.failures, book)
       if (!plan) continue
-      const key = `${run.revision ?? 0}:${gate.stageId}:${plan.code}`
+      const continuations = run.history.filter(e => e.type === 'human_work_continued').length
+      const key = `${run.revision ?? 0}:${gate.stageId}:${plan.code}${continuations ? ':c' + continuations : ''}`
       const count = (run.recoveryCounts ??= {})[key] ?? 0
-      const budget = run.history.filter(e => ['gate_passed','gate_failed'].includes(e.type)).length
-      if (count >= 3 || budget >= this.maxSubmissions) {
+      const budget = workBudget(this, run)
+      if (count >= 3 || budget.submissions.exhausted) {
         // Stop a repeated corrective loop, not a permission issue. User controls remain.
         run.state = 'failed'; run.finishedAt = gate.at
         gate.recovery = { ...plan, exhausted: true }

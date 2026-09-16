@@ -1,3 +1,4 @@
+import { workBudget, automaticBudgetError } from './work-budget.js'
 import { isDeepStrictEqual } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join, normalize, resolve, relative, sep } from 'node:path'
@@ -146,8 +147,8 @@ export function createRuntimeRecovery(ctx, engine, ready) {
       const run = engine.runs.get(id)
       if (!run || run.id !== before.id || run.stageEpoch !== before.stageEpoch || run.state !== before.state || run.revision !== before.revision)
         throw new Error('STALE_RECOVERY: run changed while the read-only probe was in flight; inspect current status')
-      if (run.history.filter(h => ['gate_passed','gate_failed'].includes(h.type)).length >= engine.maxSubmissions)
-        throw new Error('Global gate budget is exhausted; recovery does not reset it')
+      const budget = workBudget(engine, run)
+      if (budget.submissions.exhausted) throw automaticBudgetError('submission', budget)
       const at = new Date(engine.clock()).toISOString()
       if (scope) run.legacyContinuation = { ...scope, establishedAt: at, manifestSha256: binding.sha256 }
       run.history.push({ type: 'runtime_incident_recovered', patch: PATCH, code: plan.code, stageId: run.stageId,

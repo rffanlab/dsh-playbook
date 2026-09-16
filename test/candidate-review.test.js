@@ -125,8 +125,82 @@ test('acceptance is explicit and shares the same safe UI binding',async t=>{
   const out=await h.command(`review accept ${token}`);assert.equal(out.kind,'success')
   assert.equal(h.engine.status(h.agent.id).run.state,'accepted');assert.equal(h.engine.report(h.agent.id).summary.humanReviewAcceptances,1)
 })
-test('revision limit remains enforced; duplicate feedback does not bypass it',async t=>{
-  const h=await harness(t);h.engine.runs.get(h.agent.id).revision=2
-  const before=h.engine.snapshot(),out=await h.step(h.userMessage('拒绝候选'))
-  assert.match(out.messages.at(-1).content[0].text,/revision budget/);assert.deepEqual(h.engine.snapshot(),before)
+test('a third direct user rejection continues the old pinned maxRevisions=2 run',async t=>{
+  const h=await harness(t),before=h.engine.status(h.agent.id);h.engine.runs.get(h.agent.id).revision=2
+  const m=h.userMessage('拒绝候选'),out=await h.step(m),after=h.engine.status(h.agent.id)
+  assert.match(out.messages.at(-1).content[0].text,/revision 3/)
+  assert.equal(after.run.id,before.run.id);assert.equal(after.run.state,'active');assert.equal(after.run.revision,3)
+  assert.equal(after.run.stageId,'diagnose');assert.equal(after.workBudget.userRevisions.limit,null)
+  assert.deepEqual(h.engine.runs.get(h.agent.id).playbookSnapshot,h.engine.getPlaybook(book.id))
+  await h.step(m,{who:{...h.agent}});assert.equal(h.engine.status(h.agent.id).run.revision,3)
+})
+
+
+test('many human revisions pass through real pre-step past lifetime gate and repair caps, with history intact',async t=>{
+  const h=await harness(t),id=h.agent.id,original=h.engine.runs.get(id),saved=structuredClone(original.playbookSnapshot)
+  const originalId=original.id,task=structuredClone(original.input)
+  h.engine.maxSubmissions=3
+  for(let i=1;i<=35;i++){
+    await h.step(h.userMessage('拒绝候选，只改已说明的问题。',`human-round-${i}`))
+    const p=await h.call({action:'repair',stage_id:'produce',note:'Only fix the user-specified change; preserve approved assets.'})
+    assert.equal(p.ok,true,JSON.stringify(p));assert.equal(p.status.run.revision,i)
+    await h.call({action:'submit',stage_id:'produce',evidence:{artifact:`fixture ${i}`}})
+    await h.call({action:'submit',stage_id:'qa',evidence:{checked:`actual fixture check ${i}`}})
+    assert.equal(h.engine.status(id).run.state,'awaiting_review')
+  }
+  const report=h.engine.report(id)
+  assert.equal(report.run.id,originalId);assert.equal(report.run.revision,35)
+  assert.equal(report.summary.selfRepairs,35);assert.equal(report.summary.gatesPassed,72)
+  assert.equal(report.summary.workBudget.submissions.used,2)
+  assert.equal(report.summary.workBudget.selfRepairs.used,1)
+  assert.deepEqual(h.engine.runs.get(id).playbookSnapshot,saved);assert.deepEqual(h.engine.status(id).input,task)
+  assert.equal(h.engine.archives.size,0)
+  assert.equal((await h.call({action:'status'})).status.workBudget.userRevisions.limit,null)
+})
+
+test('third UI rejection has no human-count cap and remains bound to its displayed candidate',async t=>{
+  const h=await harness(t),id=h.agent.id
+  h.engine.runs.get(id).revision=2
+  const s=h.engine.status(id),out=await h.command(`review reject ${s.reviewControl.target} 修正指定镜头`)
+  assert.equal(out.kind,'success');assert.equal(h.engine.status(id).run.revision,3)
+  assert.equal(h.engine.status(id).run.id,s.run.id)
+  assert.equal((await h.command(`review reject ${s.reviewControl.target}`)).kind,'error')
+})
+
+test('direct continuation of exhausted automatic work stays in the same run and does not re-review a candidate',async t=>{
+  const h=await harness(t),id=h.agent.id
+  await h.step(h.userMessage('拒绝候选'))
+  h.engine.maxSubmissions=1
+  await h.call({action:'submit',stage_id:'diagnose',evidence:{diagnosis:'The user requested only the specified correction.'}})
+  await h.call({action:'submit',stage_id:'produce',evidence:{artifact:'bounded fixture work'}})
+  assert.equal(h.engine.status(id).run.state,'failed')
+  const before=h.engine.status(id),m=h.userMessage('继续原任务','continue-once')
+  await h.command('auto off')
+  const out=await h.step(m),s=h.engine.status(id)
+  assert.match(out.messages.at(-1).content[0].text,/已登记用户继续原任务/)
+  assert.equal(s.run.id,before.run.id);assert.equal(s.run.revision,before.run.revision)
+  assert.equal(s.run.stageId,before.run.stageId);assert.equal(s.workBudget.submissions.used,0)
+  assert.equal(s.workBudget.lifetime.submissions,before.workBudget.lifetime.submissions)
+  await h.call({action:'submit',stage_id:'produce',evidence:{artifact:'fixture after continuation'}})
+  await h.call({action:'submit',stage_id:'qa',evidence:{checked:'too many checks in this short cycle'}})
+  const unchanged=h.engine.snapshot()
+  await h.step(m,{who:{...h.agent}})
+  assert.deepEqual(h.engine.snapshot(),unchanged)
+  for(const action of ['continue','reset_budget','revise','reject']) await assert.rejects(h.call({action}),/unsupported action/)
+})
+
+test('structured automatic-budget response shows cycle vs lifetime without clearing/recreating task',async t=>{
+  const h=await harness(t),id=h.agent.id
+  await h.step(h.userMessage('拒绝候选'))
+  for(let i=0;i<3;i++)assert.equal((await h.call({action:'repair',stage_id:'produce',note:'Synthetic bounded repair of the original work.'})).ok,true)
+  const response=await h.call({action:'repair',stage_id:'produce',note:'A fourth autonomous repair must remain bounded.'})
+  assert.equal(response.ok,false);assert.equal(response.error.code,'AUTOMATIC_WORK_BUDGET_EXHAUSTED')
+  assert.equal(response.status.workBudget.selfRepairs.used,3)
+  assert.equal(response.status.workBudget.selfRepairs.limit,3)
+  assert.equal(response.nextAction,'report_bounded_work_progress')
+  await h.step({...h.userMessage('继续原任务'),source:{kind:'plugin',plugin:'fake-human'}})
+  assert.equal(h.engine.status(id).workBudget.selfRepairs.used,3)
+  await h.step(h.userMessage('继续原任务'))
+  assert.equal(h.engine.status(id).workBudget.selfRepairs.used,0)
+  assert.equal(h.engine.report(id).summary.selfRepairs,3)
 })

@@ -11,7 +11,7 @@ function stage(id, title, instructions, evidence, kind, back) {
 export function videoSop(original) {
   if (!['bilibili-video-production', 'short-video-production', 'taoist-culture-video'].includes(original.id)) return original
   const p = structuredClone(original)
-  p.delivery = { review: true, revisionStage: 'diagnose', maxRevisions: 2,
+  p.delivery = { review: true, revisionStage: 'diagnose',
     repairStages: ['script', 'pilot', 'produce', 'qa', 'content-review'], maxSelfRepairs: 3 }
   const brief = structuredClone(original.stages[0])
   brief.instructions.push('Record required deliverables and factual claims. For experiments the result is UNKNOWN until measured: do not promise success or pre-write all-gates-passed, zero interventions or A-grade claims.')

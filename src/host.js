@@ -68,6 +68,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     '- For uncertain matches inspect/recommend, then select playbook_id with a reason. Ask only missing task requirements, not which internal SOP name the user wants.',
     '- Keep an active run on user clarifications. Do not automatically replace, cancel or restart it; cancelled/failed runs are not successful completion.',
     '- Obey the current stage. Submit stage_id and complete evidence through action=submit; only the engine advances stages.',
+    '- Direct user revisions are not limited by a two-attempt cap. Each actual user revision/continuation grants one bounded work cycle; keep lifetime totals and the same run. Do not ask for another approval when a clear user instruction already grants it.',
     '- Correct failed gates within the budget. Do not cancel to bypass a gate, invent evidence, or turn missing capabilities into fabricated results.',
     '- Prefer actual work then one submit; check is an optional format-only preflight, not a mandatory extra form. The narrow {item:[...]} mistake is corrected transparently. Never pad evidence with fake observations.',
     '- Plugin path/legacy incidents: automatically use recover/workspace/repair and keep the same run. Never request clearing state, cancellation, a new conversation or weaker validators as the default workaround. Intake source_paths resolves real observed reads; do not invent call IDs.',
@@ -106,7 +107,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({
       name: 'playbook', description: 'SOP selection and current-session control',
-      input: { hint: '[project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|reject|review|accept|cancel|reload]' },
+      input: { hint: '[project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|continue|report|revise|reject|review|accept|cancel|reload]' },
       handler: async invocation => {
         try {
           engine.noteCaller(invocation)
@@ -143,6 +144,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
             const status = await engine.start(id, rest[0], rest.length > 1 ? { task: rest.slice(1).join(' ') } : {}, { signal: invocation.signal })
             router.clear(id); return success(conciseStatus(status))
           }
+          if (op === 'continue') return success(conciseStatus(await engine.continueWork(id, { signal: invocation.signal })))
           if (op === 'resume') return success(conciseStatus(await engine.resume(id, { signal: invocation.signal })))
           if (op === 'report') return success(rest[0] === 'markdown' ? reportMarkdown(engine.report(id)) : engine.report(id))
           if (op === 'review') {
@@ -161,7 +163,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
             const status = engine.status(id)
             return success(rest[0] === 'json' ? { ...status, runtimePluginVersion: PLUGIN_VERSION, routing: router.view(id) } : conciseStatus(status))
           }
-          throw new Error('usage: /playbook [project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|report|revise|reject|review|accept|cancel|reload]')
+          throw new Error('usage: /playbook [project|sops|sop <id>|approve <id> <revision>|list|inspect <id>|recommend <task>|route <task>|auto on/off|start <id>|status|resume|continue|report|revise|reject|review|accept|cancel|reload]')
         } catch (error) { return { kind: 'error', text: error?.message ?? String(error) } }
       },
     })
