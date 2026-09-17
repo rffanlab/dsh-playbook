@@ -1,3 +1,4 @@
+import { analyzeTask, requestLead, recommendationFits } from './task-scope.js'
 import { INTAKE_READ_TOOLS } from './intake-policy.js'
 /** Deterministic, literal-only routing. Scores are ranking hints, never probabilities. */
 function strings(value, label, limit = 40) {
@@ -31,7 +32,7 @@ export function requireTask(task) {
 }
 /** Avoid routing on quoted code/logs or on the topic of a requested article/video. */
 export function intentText(task) {
-  let value = task.slice(0, 24000).replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, ' ').replace(/^\s*>.*$/gm, ' ').replace(/https?:\/\/\S+/g, ' ')
+  let value = requestLead(task).replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, ' ').replace(/^\s*>.*$/gm, ' ').replace(/https?:\/\/\S+/g, ' ')
   value = value.split(/[\n，,；;]/).filter(part => !/^\s*(不要|别|不用|do not\b|don't\b)/i.test(part)).join('，')
   const topic = /(?:介绍|讲解|讲述|主题是|内容是|关于|\babout\b|\bexplaining\b|\bintroducing\b)/i.exec(value)
   if (topic && /公众号|视频|文章|歌词|歌曲|\b(article|video|song|post)\b/i.test(value.slice(0, topic.index))) value = value.slice(0, topic.index)
@@ -52,20 +53,22 @@ export function isConversation(text) {
   return /(?:是什么|什么意思|怎么用|如何使用|什么区别|能做什么)[?？。\s]*$/i.test(text)
 }
 function looksLikeWork(text) {
-  return /帮我|请|麻烦|帮忙|修|排查|恢复|部署|安装|开发|新增|实现|制作|生成|创作|整理|写|审|检查|分析|统计|复盘|调研|补全|完善|发布|发行|准备|启动不了|宕机|故障|\b(fix|debug|build|implement|create|write|produce|generate|review|audit|check|analy[sz]e|research|deploy|install|configure|prepare|release|restore|migrate|design|serve|add)\b/i.test(text)
+  return /帮我|请|麻烦|帮忙|处理|同步|注册|接入|集成|更新|修|排查|恢复|部署|安装|开发|新增|实现|制作|生成|创作|整理|写|审|检查|分析|统计|复盘|调研|补全|完善|发布|发行|准备|启动不了|宕机|故障|\b(fix|debug|build|implement|create|write|produce|generate|review|audit|check|analy[sz]e|research|deploy|install|configure|prepare|release|restore|migrate|design|serve|add)\b/i.test(text)
 }
 export function recommendPlaybook(task, catalog) {
-  const original = requireTask(task), text = intentText(original)
+  const original = requireTask(task), text = intentText(original), taskScope = analyzeTask(original)
   if (isConversation(text)) return { kind: 'conversation', confidence: 'none', recommendedId: null, candidates: [], reason: '普通问答/闲聊，不自动启动 SOP。' }
   const candidates = []
   for (const entry of catalog) {
+    if (!recommendationFits(taskScope, entry.id)) continue
     const r = normalizeRouting(entry.routing)
     if (r.exclude.some(term => matches(text, term))) continue
     const hits = r.groups.map(group => group.filter(term => matches(text, term)))
-    const complete = hits.length > 0 && hits.every(group => group.length > 0)
+    const complete = taskScope.suggestedBase === entry.id || (hits.length > 0 && hits.every(group => group.length > 0))
     const keywords = r.keywords.filter(term => matches(text, term))
     const count = hits.filter(group => group.length > 0).length
-    if (!count && !keywords.length) continue
+    const scopedHint = taskScope.suggestedBase === entry.id
+    if (!count && !keywords.length && !scopedHint) continue
     const score = (complete ? 100 : count * 10) + r.priority + Math.min(keywords.length, 5)
     candidates.push({ id: entry.id, name: entry.name, description: entry.description, score, complete, autoStart: r.autoStart,
       matched: [...new Set([...hits.flat(), ...keywords])], examples: r.examples })
@@ -75,9 +78,9 @@ export function recommendPlaybook(task, catalog) {
   const compound = /然后|同时|并且|以及|并(?:写|做|生成|发布)|\band (?:then |also )?(?:write|create|deploy|publish|produce)\b/i.test(text)
   const confident = !!top?.complete && top.autoStart && looksLikeWork(text)
     && (!second?.complete || top.score - second.score >= 10)
-    && !(compound && second?.complete)
+    && !(compound && second?.complete) && taskScope.kind !== 'mixed'
   return { kind: confident ? 'match' : candidates.length ? 'ambiguous' : looksLikeWork(text) ? 'unmatched' : 'conversation',
-    confidence: confident ? 'high' : candidates.length ? 'low' : 'none',
+    taskScope, confidence: confident ? 'high' : candidates.length ? 'low' : 'none',
     recommendedId: confident ? top.id : null, candidates: candidates.slice(0, 5),
     reason: confident ? `按交付意图匹配：${top.matched.join(' / ')}` : '规则不足以唯一确定流程；由 Agent 根据用户目标选择，缺关键信息时才追问。' }
 }
@@ -128,7 +131,7 @@ export class PlaybookRouter {
       const selected = sopId || playbookId || decision.recommendedId
       if (!selected) return { ok: true, needsSelection: true, decision, fallbackId: 'task-intake',
         message: '请 Agent 根据实际目标选择 SOP，再用 action=route、playbook_id、note 调用。只在交付物/范围不明确时向用户追问，不要求用户挑 SOP 名称。' }
-      const authorized = this.projects && origin !== 'command' ? this.projects.authorize(exec ?? { agent: { id } }, { playbookId: selected, sopId, revision }) : {}
+      const authorized = this.projects && origin !== 'command' ? this.projects.authorize(exec ?? { agent: { id } }, { playbookId: selected, sopId, revision, task: actual }) : {}
       if (!authorized.definition && !this.engine.getPlaybook(selected)) throw new Error(`unknown playbook: ${selected}`)
       if (playbookId && playbookId !== decision.recommendedId && (typeof note !== 'string' || note.trim().length < 8)) throw new Error('semantic selection requires note explaining the fit (at least 8 characters)')
       signal?.throwIfAborted()
@@ -149,6 +152,6 @@ export class PlaybookRouter {
     if (!this.view(id).pending || this.engine.attachedRun(id)) return undefined
     // run_code is a transport; nested native calls re-enter this same guard.
     if (INTAKE_READ_TOOLS.has(toolName) || ['playbook', 'run_code', 'ask_user_question', 'AskUserQuestion'].includes(toolName)) return undefined
-    return '先读取任务书并用 intake 识别项目，再 route 选择 SOP。待选流允许 read/grep/glob 等只读发现，不允许提前写入或执行制作。'
+    return '先按本次交付物 route 选择适用 SOP；任务书/项目方法需要 intake 时再登记。待选流可用 read/grep/glob 等只读发现；不要因文档里有媒体词就选择出片流程。'
   }
 }

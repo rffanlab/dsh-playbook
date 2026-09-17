@@ -6,7 +6,8 @@ import { normalizePlaybook } from './core.js'
 const clone = value => structuredClone(value)
 const idPattern = /^[a-z][a-z0-9_-]{0,47}$/
 const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex')
-import { VIDEO_BASES, isVideoTask, mentionsSource, projectHint } from './intake-policy.js'
+import { analyzeTask, selectionMismatch, recommendationFits } from './task-scope.js'
+import { VIDEO_BASES, isVideoTask, mentionsSource } from './intake-policy.js'
 export { VIDEO_BASES, INTAKE_READ_TOOLS, isVideoTask, mentionsSource, projectHint } from './intake-policy.js'
 function string(value, label, max = 4000) {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new Error(`${label} must be nonblank and <= ${max} characters`)
@@ -133,11 +134,11 @@ export class ProjectLibrary {
     const rows = this.sourceRows(scope.sessionId, refs)
     if ((this.sourcesRequired.has(scope.sessionId) || mentionsSource(raw)) && !rows.length) throw new Error('Referenced task sources must be read before intake; pass observed source_call_ids, not a claim that they were read')
     const requirements = strings(args.requirements, 'requirements')
-    const text = [raw, ...rows.map(r => r.text)].join('\n')
-    const hint = projectHint(text)
+    const taskScope = analyzeTask(raw, rows.map(r => r.text))
+    const hint = taskScope.suggestedBase
     const existingProjects = Object.values(this.engine.sopLibrary.projects).filter(p => p.workspace === scope.workspace && Object.values(p.approved ?? {}).some(rev => VIDEO_BASES.has(hint) && VIDEO_BASES.has(p.records[rev]?.baseId) && (hint === 'taoist-culture-video') === (p.records[rev]?.baseId === 'taoist-culture-video')))
     if (bound?.source !== 'human' && existingProjects.length === 1 && existingProjects[0].projectId !== scope.projectId) throw new Error('A confirmed method already exists in project ' + existingProjects[0].projectId + '; reuse that project_id or ask for an explicit new-project decision, not a renamed scope')
-    const prepared = { ...scope, task: raw, requirements, hint, sources: rows.map(({text,...meta}) => meta),
+    const prepared = { ...scope, task: raw, requirements, hint, taskScope, sourceTaskTexts: rows.map(r => r.text), sources: rows.map(({text,...meta}) => meta),
       sourceExcerpts: rows.map(row => row.text.slice(0,1200)), contractDigest: hash({ raw, requirements, sources: rows.map(r => r.sha256) }) }
     await this.engine.serialize(async () => {
       exec.signal?.throwIfAborted()
@@ -146,8 +147,21 @@ export class ProjectLibrary {
     })
     this.prepared.set(scope.sessionId, prepared)
     return { ok: true, project: { id: scope.projectId, workspace: scope.workspace }, contractDigest: prepared.contractDigest,
-      suggestedBase: hint, requirements, sources: prepared.sources, projectSops: this.list(exec),
-      next: 'Reuse an appropriate project SOP; otherwise sop_save can derive a trial from a base. Topic/duration/output paths are run inputs, not reasons to create another SOP.' }
+      suggestedBase: hint, taskScope, requirements, sources: prepared.sources, projectSops: this.list(exec),
+      next: 'Choose by this task deliverable, not project name or media words in API examples. Reuse a compatible project SOP; if none applies, select a matching installed workflow or task-intake. No project rename, SOP rewrite or user unlock is needed to correct a pre-start classification.' }
+  }
+  taskScope(prepared, raw = '') {
+    // Recompute before execution. A stale pre-start hint is never a protected
+    // contract; active run snapshots are still immutable and cannot use this.
+    return analyzeTask(prepared?.task || raw, prepared?.sourceTaskTexts ?? [])
+  }
+  assertApplicable(scope, baseId, definition) {
+    const message = selectionMismatch(scope, baseId, definition)
+    if (!message) return
+    const error = new Error(message)
+    error.code = 'SOP_TASK_MISMATCH'; error.taskScope = scope
+    error.selectedBase = baseId; error.suggestedBase = scope.suggestedBase
+    throw error
   }
   state(scope, create = false) {
     let p = own(this.engine.sopLibrary.projects, scope.key)
@@ -158,7 +172,7 @@ export class ProjectLibrary {
     let scope
     try { scope = this.scope(exec) } catch { return [] }
     const state = this.state(scope)
-    return Object.values(state?.records ?? {}).map(r => ({ logicalId:r.logicalId, revision:r.revision, status:r.status, baseId:r.baseId, name:r.definition.name, stages:r.definition.stages.length, changes:r.changes.length, currentDefault:own(state?.approved,r.logicalId)===r.revision }))
+    return Object.values(state?.records ?? {}).map(r => ({ logicalId:r.logicalId, revision:r.revision, status:r.status, baseId:r.baseId, name:r.definition.name, stages:r.definition.stages.length, changes:r.changes.length, matchesCurrentTask:recommendationFits(this.prepared.has(scope.sessionId)?this.taskScope(this.prepared.get(scope.sessionId)):null,r.baseId), currentDefault:own(state?.approved,r.logicalId)===r.revision }))
   }
   inspect(exec, logicalId, revision) {
     const scope = this.scope(exec), state = this.state(scope)
@@ -177,8 +191,7 @@ export class ProjectLibrary {
     const approved = approvedDigest ? own(state.records, approvedDigest) : undefined
     const base = this.engine.getPlaybook(args.base_id ?? approved?.baseId)
     if (!base) throw new Error('base_id must name an installed built-in/legacy SOP; inspect it before deriving')
-    if (VIDEO_BASES.has(intake.hint) && !VIDEO_BASES.has(base.id)) throw new Error('A video task cannot evade media checks by deriving from a non-video base')
-    if (intake.hint === 'taoist-culture-video' && base.id !== intake.hint) throw new Error('Taoist culture task requires its domain base, even when the destination is Bilibili')
+    this.assertApplicable(this.taskScope(intake), base.id, base)
     let raw = clone(args.definition ?? base)
     for (const key of Object.keys(raw)) if (!['schemaVersion','id','version','name','description','goal','routing','delivery','initialStage','stages'].includes(key)) throw new Error(`Unsupported SOP field: ${key}`)
     for (const stage of raw.stages ?? []) for (const key of Object.keys(stage)) if (!['id','title','mode','objective','instructions','tools','gate','retry','next','onFailure'].includes(key)) throw new Error(`Unsupported stage field: ${key}`)
@@ -240,7 +253,11 @@ export class ProjectLibrary {
     const raw = this.router.session(sid).pendingTask || ''
     const required = isVideoTask(raw) || mentionsSource(raw) || VIDEO_BASES.has(selection.playbookId) || !!selection.sopId || this.sourcesRequired.has(sid)
     if (required && !prepared) throw new Error('Read-first selection: call intake with project_id, requirements and real source read IDs before selecting this task SOP')
-    if (!prepared) return {}
+    if (!prepared) {
+      const taskScope = analyzeTask(raw || selection.task || '')
+      this.assertApplicable(taskScope, selection.playbookId, this.engine.getPlaybook(selection.playbookId))
+      return {input:{contract:{taskScope}}}
+    }
     const scope = this.scope(exec)
     if (scope.key !== prepared.key) throw new Error('Project binding changed; redo intake')
     let definition, record
@@ -264,10 +281,10 @@ export class ProjectLibrary {
       if (approved.some(r => r.baseId === definition.id || (VIDEO_BASES.has(r.baseId) && VIDEO_BASES.has(definition.id)))) throw new Error('Use the approved project SOP for this base, not a generic fallback; explicit human start remains available')
     }
     const baseId = record?.baseId ?? definition.id
-    if (prepared.hint === 'taoist-culture-video' && baseId !== prepared.hint) throw new Error('Culture project requires its domain workflow, not a platform keyword match')
-    if (VIDEO_BASES.has(prepared.hint) && !VIDEO_BASES.has(baseId)) throw new Error('Video task cannot use a non-video fallback to skip mandatory media checks')
+    const taskScope = this.taskScope(prepared)
+    this.assertApplicable(taskScope, baseId, definition)
     return { definition, input: { task: prepared.task, project: { id: scope.projectId, workspace: scope.workspace },
-      contract: { digest: prepared.contractDigest, requirements: prepared.requirements, sources: prepared.sources },
+      contract: { digest: prepared.contractDigest, requirements: prepared.requirements, sources: prepared.sources, taskScope },
       sop: record ? { id: record.logicalId, revision: record.revision, status: record.status, baseId: record.baseId, rules: record.rules } : { id: definition.id, status: 'builtin', version: definition.version } } }
   }
   async bindHuman(exec, projectId) {
@@ -287,6 +304,6 @@ export class ProjectLibrary {
     const cwd = exec.agent?.session?.header?.cwd ?? exec.session?.header?.cwd
     const availableProjects = typeof cwd === 'string' && isAbsolute(cwd) ? Object.values(this.engine.sopLibrary.projects).filter(p=>p.workspace===normalize(cwd)).map(p=>({projectId:p.projectId, approvedSops:Object.keys(p.approved), baseIds:[...new Set(Object.values(p.records).map(r=>r.baseId))]})) : []
     const prepared = this.prepared.get(sid)
-    return { binding: clone(own(this.engine.sopLibrary.bindings,sid) ?? null), prepared: prepared ? {projectId:prepared.projectId, contractDigest:prepared.contractDigest, requirements:prepared.requirements, hint:prepared.hint, sources:prepared.sources} : null, availableProjects, observedReads: reads, sops: this.list(exec) }
+    return { binding: clone(own(this.engine.sopLibrary.bindings,sid) ?? null), prepared: prepared ? {projectId:prepared.projectId, contractDigest:prepared.contractDigest, requirements:prepared.requirements, hint:this.taskScope(prepared).suggestedBase, taskScope:this.taskScope(prepared), sources:prepared.sources} : null, availableProjects, observedReads: reads, sops: this.list(exec) }
   }
 }

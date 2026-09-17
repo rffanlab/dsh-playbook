@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+- Share deliverable-scoped intent analysis across routing, intake and project method admission.
+- Do not impose media production from API formats/examples, document topics or project names.
+- Distinguish produced videos from tools/code/config/docs/audio/images and video review.
+- Correct stale pre-start hints and return actionable SOP_TASK_MISMATCH without user renaming/cleanup.
+- Keep active snapshots, protected applicable methods, run isolation and actual Host permissions.
+- Add synthetic and full-Host regression coverage; no private Session committed.
+
 ## 0.7.4
 
 - Remove the hard cap on explicit human revisions, including legacy pinned maxRevisions=2 runs.

@@ -31,7 +31,7 @@ export function compactStatus(s) {
     stage: s.stage ? {id:s.stage.id,title:s.stage.title,mode:s.stage.mode,objective:s.stage.objective,gate:s.stage.gate,tools:s.stage.tools,retry:s.stage.retry,next:s.stage.next} : null,
     instruction: s.runtimeRecovery ? s.runtimeRecovery.message + '\n' + (s.stage?.instructions?.join('\n') ?? '') : s.stage?.instructions?.join('\n') ?? s.instruction, lastGate: s.lastGate, recovery: s.recovery, activity: s.activity,
     currentManifest: manifests.at(-1)?.[1].production_manifest ?? null,
-    input: s.input ? {project:s.input.project,sop:s.input.sop} : undefined,
+    input: s.input ? {project:s.input.project,sop:s.input.sop,taskScope:s.input.contract?.taskScope} : undefined,
     acceptedEvidenceKeys: Object.keys(s.evidence ?? {}),
     machineChecks: Object.entries(s.machineEvidence ?? {}).flatMap(([stage, checks]) => checks.map(c => ({stage,kind:c.kind,passed:c.passed,warnings:c.warnings}))),
     observations: Object.fromEntries(Object.entries(s.observations ?? {}).map(([tool,row]) => [tool, {
@@ -83,6 +83,11 @@ export function usableController(definition, engine, { diagnose } = {}) {
       let out
       try { out = await definition.execute(args, exec) }
       catch (error) {
+        if (error.code === 'SOP_TASK_MISMATCH') return stamped({ok:false,
+          error:{code:error.code,message:error.message},taskScope:error.taskScope,
+          selectedBase:error.selectedBase,suggestedBase:error.suggestedBase,
+          nextAction:'select_matching_sop',
+          message:'This is a pre-start deliverable mismatch, not missing user authorization. Select a compatible SOP under the same project. Do not ask the user to rename the project, clear state, produce an unwanted video or lower an active gate.'})
         if (error.code === 'AUTOMATIC_WORK_BUDGET_EXHAUSTED') return stamped({ok:false,
           error:{code:error.code,message:error.message},status:compactStatus(engine.status(id)),
           nextAction:'report_bounded_work_progress',

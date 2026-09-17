@@ -1,14 +1,9 @@
 /** Intake policy is about the deliverable, not every keyword mentioned in its subject. */
-export const VIDEO_BASES = new Set(['bilibili-video-production', 'short-video-production', 'taoist-culture-video'])
+import { analyzeTask } from './task-scope.js'
+export { VIDEO_BASES } from './task-scope.js'
 export const INTAKE_READ_TOOLS = new Set(['read', 'grep', 'glob', 'read_image', 'web_search', 'web_fetch', 'skill'])
 const clean = text => String(text ?? '').replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, ' ').replace(/^\s*>.*$/gm, ' ')
-export function isVideoTask(text) {
-  const t = clean(text)
-  if (/(?:只要|只写|仅需|只做).{0,15}(?:脚本|文案|标题|封面)|(?:only).{0,15}(?:script|title|cover)/i.test(t)) return false
-  if (/(?:写|撰写|write|draft).{0,15}(?:文章|公众号|文档|article|post|documentation)/i.test(t)) return false
-  if (/(?:开发|修复|debug|implement|develop).{0,24}(?:插件|接口|功能|代码|plugin|api|feature|code)/i.test(t)) return false
-  return /视频|成片|口播|b站|\b(video|bilibili|tiktok)\b/i.test(t)
-}
+export function isVideoTask(text) { return analyzeTask(text).producesVideo }
 export function mentionsSource(text) {
   const t = clean(text)
   const inlineBrief = String(text ?? '').length >= 800 && String(text).split('\n').length >= 8
@@ -18,9 +13,4 @@ export function mentionsSource(text) {
   const outputOnly = /(?:写|创建|生成|保存为|create|write|save as).{0,16}[\w.-]+\.(md|txt)\b/i.test(t) && !/读取|参考|根据|\bread\b|\bexisting\b/i.test(t)
   return pathMention && !outputOnly
 }
-export function projectHint(text) {
-  if (!isVideoTask(text)) return null
-  if (/道家|道教|庄子|老子|道德经|逍遥游|\b(taoist|taoism|daoist|zhuangzi)\b/i.test(clean(text))) return 'taoist-culture-video'
-  if (/b站|bilibili/i.test(clean(text))) return 'bilibili-video-production'
-  return 'short-video-production'
-}
+export function projectHint(text, sources = []) { return analyzeTask(text, sources).suggestedBase }

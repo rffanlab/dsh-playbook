@@ -105,3 +105,46 @@ test('legacy same-name files cannot replace reserved built-in protections on rel
   assert.ok(h.engine.getPlaybook('taoist-culture-video').stages.find(s=>s.id==='qa').gate.validators.length)
   assert.equal(h.engine.getPlaybook('taoist-culture-video').stages.some(s=>s.id==='instant-done'),false)
 })
+
+test('media-tool integration full Host path: original request, intake, route and engineering work without media allocation',async t=>{
+  const h=await host(t);h.agent.session.header.cwd=h.directory
+  const task='将下面的工具全局同步给所有session：# DSH 核心工具接入契约\n\n## 工具能力\n'+
+    ('输入支持音视频格式，媒体 CLI 能生成口播配音和图片；这些是能力说明，不是本次交付物。\n').repeat(120)
+  const m={id:'integration-request',source:{kind:'user'},content:[{type:'text',text:task}]}
+  const after=await h.listeners.get('agent/pre-step')({agent:h.agent,signal:h.signal,messages:[m]},async()=>({kind:'enter',messages:[m]}))
+  assert.equal(h.engine.runs.size,0)
+  assert.match(after.messages.at(-1).content[0].text,/"kind":"software"/)
+  assert.ok(!after.messages.at(-1).content[0].text.includes('short-video-production'))
+  const intake=await h.call({action:'intake',project_id:'media-tools',requirements:['全局接入工具，保留原宿主权限和密钥隔离。']})
+  assert.equal(intake.taskScope.producesVideo,false)
+  // An initially bad Agent choice has a recoverable selection error, not a user approval dialog.
+  const bad=await h.call({action:'route',playbook_id:'short-video-production',note:'There is a video word in the spec'})
+  assert.equal(bad.ok,false);assert.equal(bad.error.code,'SOP_TASK_MISMATCH');assert.equal(bad.nextAction,'select_matching_sop')
+  assert.equal(h.engine.runs.size,0)
+  const out=await h.call({action:'route',playbook_id:'dsh-plugin-development',note:'The deliverable is global tool integration, not an MP4.'})
+  assert.equal(out.status.run.playbookId,'dsh-plugin-development')
+  assert.equal(out.status.isolation,null)
+  assert.equal(out.status.input.taskScope.producesVideo,false)
+  assert.ok(h.engine.activeRun('session').playbookSnapshot.stages.every(s=>s.gate.validators.length===0))
+  const check=name=>h.guards.map(g=>g({agent:h.agent,name,arguments:{file_path:join(h.directory,'integration.js')}})).filter(Boolean)
+  assert.deepEqual(check('bash'),[])
+  assert.ok(check('write').length,'engineering contract stage still denies premature edits')
+  const r=await h.call({action:'submit',stage_id:'contract',evidence:{target_version:'test-sdk',contract_sources:['fixture public tool definitions'],scope_plan:'Implement global tools inside the actual Host permission boundary.'}})
+  assert.equal(r.gatePassed,true);assert.equal(r.status.run.stageId,'design')
+  await h.call({action:'submit',stage_id:'design',evidence:{design:'Typed CLI wrapper using a fixed program and argv.',state_model:'Stateless per-call tool wrapper with explicit output paths.',failure_policy:'Return real errors, no raw credential or authority bypass.'}})
+  assert.deepEqual(check('write'),[])
+  assert.equal(h.engine.status('session').run.stageId,'implement')
+  // All these undefined results leave external Host guards in force; none grants
+  // an allow result or changes the session sandbox/approval settings.
+  const originalHostGuard=()=> 'external workspace permission required'
+  assert.ok([...h.guards,originalHostGuard].map(g=>g({agent:h.agent,name:'write'})).includes('external workspace permission required'))
+})
+
+test('short engineering request can auto-start without project intake or video-only prompting',async t=>{
+  const h=await host(t)
+  const m={id:'engineering-auto',source:{kind:'user'},content:[{type:'text',text:'给 DSH 开发一个视频生成插件'}]}
+  const out=await h.listeners.get('agent/pre-step')({agent:h.agent,signal:h.signal,messages:[m]},async()=>({kind:'enter',messages:[m]}))
+  assert.equal(h.engine.status('session').run.playbookId,'dsh-plugin-development')
+  assert.equal(h.engine.status('session').isolation,null)
+  assert.ok(!out.messages.at(-1).content[0].text.includes('production.json'))
+})

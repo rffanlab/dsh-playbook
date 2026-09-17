@@ -1,5 +1,6 @@
 import { mayContinueWork, isWorkContinuation } from './work-budget.js'
-import { isVideoTask, mentionsSource } from './intake-policy.js'
+import { analyzeTask, recommendationFits } from './task-scope.js'
+import { mentionsSource } from './intake-policy.js'
 import { reviewFeedback } from './run-control.js'
 /** Public DSH pre-step adapter. SDK message construction is supplied by the Host entry. */
 export function installAutoRouting(ctx, engine, router, { ready = async () => {}, createMessage, onError = console.error, allowsControl = () => false } = {}) {
@@ -91,17 +92,22 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
       if (decision.kind === 'conversation') return finish(downstream)
       let instruction
       const documentAttached = fresh.some(m => (m.content ?? []).some(b => !['text','image','audio','video'].includes(b.type)))
-      const requiresIntake = isVideoTask(raw) || mentionsSource(raw) || documentAttached
+      const taskScope = analyzeTask(task)
+      const requiresIntake = taskScope.producesVideo || mentionsSource(raw) || documentAttached
       router.projects?.capture(id, task, { attachment: documentAttached })
       if (decision.kind === 'match' && raw.length <= 4000 && !requiresIntake) {
         const routed = await router.route(id, { task, origin: 'auto', signal, exec: { agent, signal } })
         instruction = `${routed.message}\n${routed.status?.instruction ?? ''}`
       } else {
-        const summaries = engine.listPlaybooks().map(p => `${p.id}: ${p.description}`).join('\n')
-        instruction = 'SOP 接单（先读后选）：视频/任务书请求不可仅凭平台关键词直接启动。允许 read/grep/glob 等只读发现；先读完整任务文档，调用 intake（project_id、requirements、source_call_ids），项目 ID 由你根据真实项目决定，不要求用户记。\n当前任务的主题、输出路径属于 input，不要每期创建新 SOP。用 sop_list/sop_inspect 优先查该项目已确认方法；不适配时 sop_validate/sop_save 起草试用定义，不能削弱已确认规则或替换在途流程。\n道家文化内容即使发布到 B 站仍按文化项目处理。没有任务文档时以用户原始任务登记；提到但拿不到文档时先索取，不伪造读取。\n用户只需给任务，不必记命令。请根据交付意图判断适用流程，先调用 playbook(action="route", playbook_id=选中的ID, note=选择理由)。\n'
-          + '可先用 action=recommend 查询候选，或 action=inspect 阅读完整流程。不要让用户在内部 SOP 名称中选择。\n'
-          + '只有缺少会改变执行结果的目标/输入/范围时才追问；不要复问已有信息。无专用流程时明确说明并选择 task-intake。复合任务先界定先后顺序，不声称已并行跑完多个 SOP。\n'
-          + `规则候选（不是命令，也不是概率）：${JSON.stringify(decision.candidates)}\n可用目录：\n${summaries}`
+        const summaries = engine.listPlaybooks().filter(p => recommendationFits(taskScope,p.id)).map(p => `${p.id}: ${p.description}`).join('\n')
+        instruction = 'SOP 接单：先确认本次要交付什么，再选择匹配流程。项目名称、工具支持格式、接口示例不定义本次交付物。\n'
+          + `本次交付物判断（提示，不是用户新要求）：${JSON.stringify(taskScope)}\n`
+          + '允许 read/grep/glob 等只读发现。引用了任务文件时读完整后 intake；完整粘贴文本就是任务输入，不要求再创建文件供读取。\n'
+          + '工具接入/配置/代码改动使用工程流程；文稿、图片、音频、视频审核不是出片任务。不要为这些任务启动口播、样片或 MP4 验收，也不要让用户换项目名来绕过误分类。\n'
+          + '需要项目方法时调用 intake（project_id、requirements、source_paths），再 sop_list/sop_inspect 查适用版本；同一项目可有不同种类的工作。已确认方法只在其适用任务内复用，不覆盖本次用户目标。\n'
+          + (taskScope.producesVideo ? '本次确实要求视频成片：先读后选，保留独立 Run 归属与真实媒体验收。文化方法与发布平台分开；不把已有文稿当作必须重写的步骤。\n' : '')
+          + '明确匹配可直接 route；不确定时 inspect/recommend 后按交付物选择，缺少影响结果的目标/输入才追问。不要让用户选择内部 SOP 名称。无专用流程使用 task-intake，不冒充领域专家。复合任务说明当前流程覆盖范围，不能声称一条流程覆盖所有交付物。\n'
+          + `规则候选（不是命令或概率）：${JSON.stringify(decision.candidates)}\n当前适用目录：\n${summaries}`
       }
       return finish({ ...downstream, messages: [...downstream.messages, notice(instruction)] })
     } catch (error) {

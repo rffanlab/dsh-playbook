@@ -2,85 +2,73 @@
 
 [中文](README.md)
 
-**Give a task, read its sources, choose a project SOP, execute through evidence gates.**
+**Select a method for the requested deliverable, not a single production pipeline for every task.**
 
-## 0.7.4: human revisions are not autonomous retries
+A general DeepSeek Harness SOP plugin: a method catalog, project library, stage evidence, controlled repair and audit reports. Video production is one domain, not the engine's default task.
 
-No fixed cap on explicit human revisions. Autonomous allowances are per user instruction while lifetime audit counts remain intact. Continue existing runs and approved methods without cancellation or recreation. See [human revisions and work budgets](docs/HUMAN-REVISION.en.md).
+## 0.8.0: deliverable-scoped selection
 
-## 0.7.3: candidate review works directly in chat
+Integrating media tools into all Sessions is an engineering/configuration task, not an MP4 request just because the manual lists video formats, TTS examples or cover paths. Recommendations, intake and admission share a deliverable analysis; project identity is separate from task type. See [task scope](docs/TASK-SCOPE.en.md) for the reproduced fault and limits.
 
-Direct “拒绝候选” now enters the original run revision. The optional settings-panel button uses the same review path and checks the displayed session/candidate. No clearing, cancellation or invented mandatory UI action. [Review entrances and tests](docs/CANDIDATE-REVIEW.en.md).
+| Request | Method family |
+|---|---|
+| Develop a video plugin, integrate a CLI, fix rendering code | Appropriate software/configuration workflow |
+| Write docs, a video script or subtitles only | Document workflow or explicit generic intake |
+| Create only audio, narration, an image or a cover | That deliverable, not a complete video |
+| Review an existing video | Review, not production from scratch |
+| Produce a complete video | Applicable production SOP and real media checks |
 
-## 0.7.2: recovery dispatch after continuation
-
-Failed-task continuation no longer creates competing intake. Exact internal recovery calls pass this plugin's intake guard while external Host policy remains enforced. Failures preserve call IDs/codes and do not become a retry loop or an off-SOP approval request. See [recovery dispatch](docs/RECOVERY-DISPATCH.en.md). `runtimePluginVersion` identifies the loaded patch separately from the pinned SOP.
-
-## 0.7.1: continue without clearing a run
-
-Fixes duplicated manifest path bases and adds narrowly verified same-run incident recovery without resetting history or budgets. Recorded pre-isolation revisions have an explicit compatibility path. Intake can resolve actual source_paths instead of copied opaque call IDs. Approved methods and quality gates remain unchanged.
-
-[Runtime recovery and compatibility](docs/RUNTIME-RECOVERY.en.md)
-
-## 0.7.0: less paperwork, targeted repair, unchanged quality requirements
-
-Recognize long user reviews and direct rejection phrases; accept repair aliases; return stale narration directly to script rather than cycling producer/QA. Compact status by default, ASS narration-style support, display-punctuation normalization and guarded read-only media diagnostics. Handoff rehashes unchanged artifacts instead of decoding everything again; generic covers no longer need meaningless byte edits. Keep pilots to one natural segment and final duration driven by audio, not fixed overlay lengths.
-
-[Workflow corrections, ASS examples and limits](docs/WORKFLOW-UX.en.md)
-
-## Retained: per-run media artifact roots
-
-New media production runs allocate `.dsh-runs/<UUID>` instead of treating old final.mp4 files in the shared project as current outputs. Validation checks actual paths, ownership markers, links, supplementary timestamps and known prior final hashes. Reports include validation-time lineage. **This is artifact acceptance isolation, not an OS read sandbox or proof that a model created the bytes.**
-
-[Run isolation, prior-hash registration and migration](docs/RUN-ISOLATION.en.md)
+Uncertain cases remain for the current Agent to interpret; ask only materially missing task facts. Generic intake is explicitly labeled when no specialized method fits. Rules are not an accuracy-benchmarked semantic classifier, and mixed requests do not imply automatic parallel multi-SOP orchestration.
 
 ## Update and use
 
-Back up the actual playbook-state.json. Use the original service account, DSH_HOME and Web Profile:
+Back up the actual state. Use the original service account, DSH_HOME and Web Profile:
 
 ```bash
 dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 ```
 
-Restart the service and refresh the browser. Start new tasks in a fresh conversation; continue affected path/compatibility incidents in their existing session without cancelling solely to upgrade. No hand-written SOP JSON is required. Old outputs are not silently copied or relabelled as new independent experiments.
+Restart and refresh the browser, then give a task directly. Simple clear tasks can auto-select; referenced sources/project methods require read-first intake. No routine hand-written JSON, manual method choice or start command is required.
 
-Read sources → identify project → reuse/draft SOP → pin version → execute → verify → bounded repair → candidate → user review.
+For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.8.0` identifies this runtime; pinned method versions may remain older.
 
-Media route/start prepares an isolated artifact directory through the original guarded tools. A failed preparation never adopts an old directory. The Agent can use `playbook(action="workspace")` and then use its absolute paths and explicit bash workdir.
+## Engine and domain contracts
 
-## Retained capabilities
+20 base methods cover engineering, review, release preparation, recovery, deployment, content, music, research and analysis. The selected method defines stage evidence; document topics and supported tool input formats do not add unwanted task requirements.
 
-20 base workflows cover engineering, review, releases, recovery, deployment, media, music, research and analysis. Bilibili experiments, Taoist-culture videos and generic short videos retain different business methods while sharing applicable technical checks. A script-only request should not force a full video.
+Project methods are scoped by Host cwd plus project_id. A project may maintain both engineering and content methods instead of a permanent video-only identity. Additive methods may be trials; protected changes remain drafts until human approval of the exact version. See [project SOPs](docs/PROJECT-SOPS.en.md).
 
-Project SOPs are scoped by Host cwd plus project_id. Additive trial methods may be saved; protected changes remain drafts until the user approves the exact version. Renaming/reloading cannot waive active gates. Episode inputs, platform and long-term method remain separate.
+Started runs pin their task and method. An Agent cannot remove a failing gate. Technical repair stays within the original Run; formatting or recognized plugin incidents should not require user cancellation/cleanup. Explicit human revisions have no fixed two-revision cap; autonomous work is bounded per instruction and lifetime records remain. See [runtime recovery](docs/RUNTIME-RECOVERY.en.md) and [work budgets](docs/HUMAN-REVISION.en.md).
 
-Stages, retries, revisions and pinned definitions persist outside model context. Media checks read actual full scripts, exact segment texts, pilots, audio, subtitles, covers and final bytes. Model claims do not replace machine checks; technical success does not establish semantic or creative quality.
+Evidence submission alone is not independent proof. A software command receipt establishes the actual invocation/outcome, not sufficient tests. Artifact checks establish measured properties, not satisfaction or semantic certification.
 
-## Controls
+## Video-production-specific checks
 
-Use DSH chat, not a system shell:
+Only production methods with media validators require `.dsh-runs/<UUID>`, exact narration mapping, a pilot, audio/subtitle and final-media checks. Bilibili experiments and Taoist culture retain distinct business stages. Code, articles and audio-only work do not acquire video obligations.
+
+Video candidates can await direct user review; rejecting in chat resumes the same task, with the panel optional. Independent experiments cannot present known old finals as new outputs, while same-work revisions may reuse unchanged assets. Acceptance isolation is not an OS sandbox or authorship attestation. See [media revision](docs/MEDIA-REVISION.en.md), [run isolation](docs/RUN-ISOLATION.en.md), [candidate review](docs/CANDIDATE-REVIEW.en.md).
+
+## Inspect and control
+
+In DSH chat:
 
 ```text
+/playbook status json
+/playbook list
 /playbook project
 /playbook sops
-/playbook status json
 /playbook report
-/playbook revise Diagnose and repair the rejected candidate
-/playbook accept
 /playbook auto off
-/playbook cancel
 ```
 
-The Web Playbook panel retains project inspection/approval, status and resume. `auto off` does not cancel an active run. For an untracked legacy result the user can register `/playbook exclude-hash <SHA256> <reason>`; this is not a model-removable baseline.
+These are observation/manual controls, not routine prerequisites. `auto off` disables new intake without cancelling active work. The Web panel provides method inspection/approval and applicable candidate review.
 
-## Documentation and tests
+## Verification and boundaries
 
-See [project methods](docs/PROJECT-SOPS.en.md), [media revision](docs/MEDIA-REVISION.en.md), [catalog](docs/SOP-CATALOG.en.md), [receipts/format repair](docs/QUALITY.en.md) and [architecture](docs/ARCHITECTURE.md).
+Node 20+: `npm test`, `npm run check`, `npm run packcheck`. Media checks additionally use Python 3.9+, ffmpeg and ffprobe: `npm run mediatest`. Actual SDK contracts use `npm run sdkcheck`; CI also exercises React/DOM review and real Python through simulated Host dispatch.
 
-Node 20+. Media validation needs Python 3.9+, ffmpeg and ffprobe, with no pip/model/API-key dependency. Missing tools are unverified, never auto-installed. Directory preparation and validation inherit the existing DSH tool policy.
+State remains v3 with a single Host writer. This classification fix does not delete methods/messages/history or override Host file, external-action or approval policy. Tests are not an E5/live-model delivery. No ASR or independent semantic reviewer is added, and no universal routing accuracy or model-quality improvement is claimed.
 
-Run `npm test`, `npm run check`, `npm run packcheck`; real synthetic media: `npm run mediatest`; installed SDK contract: `npm run sdkcheck`. `node scripts/isolation-smoke.mjs` executes real Python through simulated Host dispatch, not a deployed Web/model test.
-
-State stays v3 with optional isolation fields and a single Host writer. Approval and ownership are not isolation from malicious same-user processes. Hashes do not detect re-encoding, timestamps do not prove origin, model labels do not attest authorship. No ASR, independent semantic reviewer or measured model-quality gain is claimed.
+[SOP catalog](docs/SOP-CATALOG.en.md) · [Changelog](CHANGELOG.md)
 
 MIT License.

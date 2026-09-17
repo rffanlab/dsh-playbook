@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { install } from '../src/host.js'
+import { PLUGIN_VERSION } from '../src/controller-ux.js'
 import { runtimeRecoveryPlan, recoveryProbeFailure } from '../src/runtime-recovery.js'
 
 // Synthetic failed-run records; no user task, media or session is published.
@@ -89,7 +90,7 @@ for (const text of ['继续生成 v3，保留已批准文稿与素材。', '执�
     assert.deepEqual(after.history.slice(0, -1), before.history)
     assert.equal(after.lastGate.passed, false)
     assert.ok(h.decisions.every(d => d.reasons.length === 0))
-    assert.match(out.runtimePluginVersion, /^0\.7\./)
+    assert.equal(out.runtimePluginVersion, PLUGIN_VERSION)
   })
 }
 

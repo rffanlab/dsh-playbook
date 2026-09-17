@@ -74,3 +74,23 @@ const rv = await rt.execute({action:'recover'},{agent:{id:'no-run',session:{head
 assert.equal(rv.recovered,false)
 assert.deepEqual(rv,JSON.parse(JSON.stringify(rv)))
 console.log('Real SDK recovery/source-path schema passed; no model or live deployment claimed.')
+
+// A media capability manual is not a request to produce a video.
+const e3 = new IsolatedPlaybookEngine(); for (const p of BUILTIN_PLAYBOOKS) e3.register(p)
+const r3 = new PlaybookRouter(e3), l3 = new ProjectLibrary(e3,r3); r3.projects = l3
+const m3 = createIsolationManager({tools:{}},e3)
+const t3 = defineTool(m3.wrap(playbookDefinition(e3,async()=>[],r3,async()=>{},undefined,undefined,l3)))
+const x3 = {agent:{id:'integration-sdk',session:{header:{cwd:'/workspace/media-tools'}}},signal:new AbortController().signal}
+r3.remember('integration-sdk','将下面的媒体工具全局同步给所有session。\n\n## API formats\n支持音视频格式、配音、图片和视频生成示例。')
+for (const args of [
+  {action:'intake',project_id:'media-tools',requirements:['注册固定 CLI 工具，不生产视频。']},
+  {action:'route',playbook_id:'dsh-plugin-development',note:'The deliverable is global tool integration, not an example media output.'},
+]) {
+  const v = await t3.execute(args,x3)
+  assert.deepEqual(v,JSON.parse(JSON.stringify(v)))
+  assert.ok(t3.output.render(args,v)[0].text)
+}
+assert.equal(e3.status('integration-sdk').run.playbookId,'dsh-plugin-development')
+assert.equal(e3.status('integration-sdk').isolation,null)
+assert.equal(e3.status('integration-sdk').input.contract.taskScope.kind,'software')
+console.log('Real SDK: media-tool integration stays in the same project and uses software stages with no video workspace.')
