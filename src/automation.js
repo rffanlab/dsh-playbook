@@ -37,12 +37,14 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
       signal?.throwIfAborted()
       engine.noteCaller?.({ agent })
       const existing = engine.status(id), feedback = reviewFeedback(raw)
-      if (!existing.runtimeRecovery && existing.run && feedback === 'reject' && ['completed', 'awaiting_review', 'accepted', 'failed'].includes(existing.run.state)) {
+      if (!existing.runtimeRecovery && existing.run && feedback === 'reject' && (['completed', 'awaiting_review', 'accepted', 'failed'].includes(existing.run.state) || (['active','blocked'].includes(existing.run.state) && existing.run.revision > 0))) {
         reviewOperation = 'reject'
         const status = await engine.requestRevision(id, raw, { signal,
           messageId: fresh.at(-1).id == null ? undefined : String(fresh.at(-1).id),
           expectedReviewTarget: existing.reviewControl?.target })
-        const summary = status.active
+        const summary = status.run.revision === existing.run.revision && ['active','blocked'].includes(existing.run.state)
+          ? '已将本次意见追加到当前返修；不重复增加修订号或重置阶段，直接继续按最新意见执行。'
+          : status.active
           ? `原交付被否决：已进入同一 run 的 revision ${status.run.revision}；聊天退回已登记，不再索要 UI 点击或额外授权。`
           : '该用户评审消息已处理；不重复否决后续候选，当前状态保持不变。'
         return finish({ ...downstream, messages: [...downstream.messages, notice(`${summary}\nrun=${status.run.id}; state=${status.run.state}; stage=${status.run.stageId}\n不得取消/清空/新开任务；仅按本次反馈修正，保留未要求修改的内容。\n${status.instruction}`)] })

@@ -16,7 +16,7 @@ const book = {id:'candidate-fixture',delivery:{review:true,revisionStage:'diagno
 async function harness(t) {
   const workspace=await mkdtemp(join(tmpdir(),'candidate-review-'))
   const hooks=new Map(), guards=[], commands=new Map(), tools=new Map()
-  const agent={id:'session',session:{header:{cwd:workspace}}}, signal=new AbortController().signal
+  const agent={id:'session',session:{header:{cwd:workspace}},steer:()=>{}}, signal=new AbortController().signal
   const ctx={on:(n,f)=>hooks.set(n,f),effect:()=>{},provide:()=>{},inject:(_d,f)=>f(ctx),
     tools:{register:d=>tools.set(d.name,d),guard:g=>guards.push(g)},
     systemPrompt:{section:()=>{}},commands:{register:c=>commands.set(c.name,c)}}

@@ -68,3 +68,15 @@ jobs:
       - name: Install isolated DOM test dependencies (not runtime dependencies)
         run: npm install --ignore-scripts --no-package-lock --no-save react@18.3.1 react-dom@18.3.1 jsdom@24.1.3
       - run: node scripts/client-review-smoke.mjs
+
+  revision-driver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install actual Host runtime for scripted model integration
+        run: npm install --ignore-scripts --no-package-lock --no-save @deepseek-ai/cordis @deepseek-ai/dsh-agent @deepseek-ai/dsh-agent-loop @deepseek-ai/dsh-commands @deepseek-ai/dsh-session @deepseek-ai/dsh-session-projection @deepseek-ai/dsh-system-prompt
+      - run: npm ls @deepseek-ai/dsh-agent-loop @deepseek-ai/dsh-commands @deepseek-ai/dsh-llm
+      - run: npm run revisioncheck

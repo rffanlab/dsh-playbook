@@ -1,3 +1,4 @@
+import { createRevisionDispatcher } from './revision-dispatch.js'
 import { createRuntimeRecovery } from './runtime-recovery.js'
 import { ProjectLibrary } from './project-library.js'
 import { createReportExporter, isReportWrite } from './report-export.js'
@@ -51,6 +52,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     catch (error) { console.error(`[dsh-playbook] custom catalog rejected; retaining built-ins and pinned runs: ${error?.message ?? error}`) }
   })()
   const ready = async () => { await initialized; if (startupError) throw new Error(`playbook state unavailable: ${startupError.message}`) }
+  const revisionDispatcher = createRevisionDispatcher(ctx,engine,message)
   const pendingWrites = new Map()
   const isolation = createIsolationManager(ctx, engine)
   const diagnostics = createMediaDiagnostics(ctx, engine)
@@ -107,7 +109,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     void engine.observeTool(String(exec.agent.id), { ...scope, name: exec.name, callId: exec.callId, isError: result.isError, receipt: toolReceipt(exec, result) })
       .catch(error => console.error(`[dsh-playbook] observation failed: ${error?.message ?? error}`))
   })
-  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); recovery.clear(); delivery.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
+  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); recovery.clear(); delivery.clear(); revisionDispatcher.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
   installAutoRouting(ctx, engine, router, { ready, createMessage: message, allowsControl })
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({
@@ -157,11 +159,14 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
             if (!['reject','accept'].includes(decision) || !/^[a-f0-9]{64}$/.test(target ?? '')) throw new Error('usage: /playbook review reject|accept <displayed-candidate-target> [feedback]; ordinary chat can use /playbook revise')
             const options = { signal: invocation.signal, expectedReviewTarget: target }
             const status = decision === 'reject'
-              ? await engine.requestRevision(id, reason.join(' ') || '用户在 Playbook 面板拒绝当前候选；继续处理已有的审核意见。', options)
+              ? await revisionDispatcher.revise(invocation, reason.join(' ') || '用户在 Playbook 面板拒绝当前候选；继续处理已有的审核意见。', options)
               : await engine.accept(id, options)
-            return success(conciseStatus(status))
+            return success(decision === 'reject' ? status.text + '\n' + conciseStatus(status.status) : conciseStatus(status))
           }
-          if (op === 'revise' || op === 'reject') return success(conciseStatus(await engine.requestRevision(id, rest.join(' ') || '用户明确拒绝当前候选；在原任务中诊断并返修，保留已确认要求。', { signal: invocation.signal })))
+          if (op === 'revise' || op === 'reject') {
+            const outcome = await revisionDispatcher.revise(invocation,rest.join(' ') || '用户明确拒绝当前候选；在原任务中诊断并返修，保留已确认要求。')
+            return success(outcome.text + '\n' + conciseStatus(outcome.status))
+          }
           if (op === 'accept') return success(conciseStatus(await engine.accept(id, { signal: invocation.signal })))
           if (op === 'cancel') { const status = await engine.cancel(id, rest.join(' ') || 'cancelled by user', { signal: invocation.signal }); router.clear(id); return success(conciseStatus(status)) }
           if (op === 'status' || op === 'show') {

@@ -38,7 +38,7 @@ export function compactStatus(s) {
       calls: row.calls, successes: row.successes, failures: row.failures, lastCallId: row.lastCallId,
       receipts: (row.receipts ?? []).slice(-4),
     }])),
-    reviewControl: s.reviewControl, workBudget: s.workBudget, artifactDelivery: s.artifactDelivery,
+    revisionDispatch: s.revisionDispatch, reviewControl: s.reviewControl, workBudget: s.workBudget, artifactDelivery: s.artifactDelivery,
     revisionFeedback: s.revisionFeedback ? clip(s.revisionFeedback, 1200) : null,
     detail: 'compact; use detail=full only to read prior evidence or full feedback',
   }

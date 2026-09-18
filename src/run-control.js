@@ -1,3 +1,4 @@
+import { queueRevisionDispatch } from './revision-dispatch.js'
 import { workBudget, automaticBudgetError, userEventSeen, mayContinueWork } from './work-budget.js'
 import { createHash } from 'node:crypto'
 /** Durable revision control and reports. No model-authored counts or grades. */
@@ -74,7 +75,7 @@ export async function repair(engine, sessionId, target, reason, { signal } = {})
     await engine.save(); return engine.status(sessionId)
   })
 }
-export async function requestRevision(engine, sessionId, reason, { signal, messageId, expectedReviewTarget } = {}) {
+export async function requestRevision(engine, sessionId, reason, { signal, messageId, expectedReviewTarget, wakeRequest } = {}) {
   return engine.serialize(async () => {
     signal?.throwIfAborted()
     const run = engine.runs.get(String(sessionId)), book = engine.playbookForRun(run)
@@ -82,6 +83,19 @@ export async function requestRevision(engine, sessionId, reason, { signal, messa
     // consume a second revision, even after a Host restart.
     if (userEventSeen(run, messageId)) return engine.status(sessionId)
     checkReviewTarget(run, expectedReviewTarget)
+    // A second explicit opinion during this revision is supplemental input, not
+    // rejection of another candidate. Keep stage/evidence/attempts and revision.
+    if (run && book && ['active','blocked'].includes(run.state) && run.revisions?.length && (run.revision ?? 0) > 0) {
+      const now = at(engine), feedback = String(reason).slice(0,24000), revision = run.revisions.at(-1)
+      const duplicateText = revision.reason === feedback || revision.supplements?.some(row => row.reason === feedback)
+      if (!duplicateText) (revision.supplements ??= []).push({reason:feedback,at:now,messageId:messageId??null})
+      run.feedbackIds = [...(run.feedbackIds ?? []), ...(messageId ? [messageId] : [])].slice(-64)
+      run.updatedAt = now
+      run.history.push({type:'human_revision_feedback',at:now,revision:run.revision,stageId:run.stageId,
+        reason:feedback,messageId:messageId??null,duplicateText:!!duplicateText})
+      queueRevisionDispatch(run,wakeRequest,now)
+      await engine.save(); return engine.status(sessionId)
+    }
     if (!run || !book || !terminal.has(run.state) || run.state === 'cancelled') throw new Error('No completed/candidate/failed run to revise')
     // A new explicit human request is not an autonomous retry. Legacy
     // delivery.maxRevisions is retained in pinned snapshots, never used to veto it.
@@ -106,6 +120,7 @@ export async function requestRevision(engine, sessionId, reason, { signal, messa
     run.history.push({ type: 'human_review_rejected', at: now, revision, stageId: target,
       reason: String(reason).slice(0, 24000), invalidated, messageId: messageId ?? null,
       automationBaseline: baseline })
+    queueRevisionDispatch(run,wakeRequest,now)
     await engine.save(); return engine.status(sessionId)
   })
 }
@@ -195,7 +210,7 @@ export function reviewFeedback(text) {
   if (/^(?:好的[，,。\s]*)?(?:这版)?(?:我确认)?(?:验收通过|确认通过|通过验收|接受这版)[！!。\s]*$|^I accept this(?: version)?[.!\s]*$/i.test(lines.join('\n'))) return 'accept'
   // Only a direct instruction near the beginning, not an example embedded later.
   const head=direct.slice(0,4).join('\n')
-  const imperative = /^(?:(?:大佬|老哥)[，,：:\s]*)?(?:请|麻烦)?\s*(?:拒绝(?:(?:当前|这个|本次|这[一版份个])?候选(?:版本|成片|结果)?|这版(?:成片)?|当前(?:成片|版本))|不接受(?:(?:当前|这个|本次|这[一版份个])?候选(?:版本|成片|结果)?|这版(?:成片)?|当前(?:成片|版本))|候选(?:验收)?(?:不|未)通过)(?:[。.!！]?[ \t]*$|[，,；;：:][ \t]*(?:请|按|只|仅|保留|其余|不要|不改|修改|替换|重做|返修|自行|进入|原因|问题|因为|镜头|画面|声音|字幕|前|s\d))/i
+  const imperative = /^(?:(?:大佬|老哥)[，,：:\s]*)?(?:请|麻烦)?\s*(?:拒绝(?:(?:当前|这个|本次|这[一版份个])?候选(?:版本|成片|结果)?|这版(?:成片)?|当前(?:成片|版本))|不接受(?:(?:当前|这个|本次|这[一版份个])?候选(?:版本|成片|结果)?|这版(?:成片)?|当前(?:成片|版本))|候选(?:验收)?(?:不|未)通过)(?:[。.!！]?[ \t]*$|[，,；;：:][ \t]*(?:请|按|只|仅|保留|其余|不要|不改|修改|替换|重做|返修|自行|进入|原因|问题|因为|补充|镜头|画面|声音|字幕|前|s\d))/i
   if (direct.slice(0,4).some(line => imperative.test(line))) return 'reject'
   if (/^(?:please )?reject (?:the |this |current )?candidate[.!\s]*$/i.test(head)) return 'reject'
   if (/^(?:(?:大佬|老哥|请|麻烦)[，,：:\s]*)?(?:打回(?:当前|这[一版份个])?(?:候选|成片|版本)|退回(?:当前|这[一版份个])?(?:候选|成片|版本)|(?:最终成片)?验收(?:不|未)通过)/m.test(head)) return 'reject'

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1
+
+- Human revise/reject commands and panel rejection persist feedback then steer the same live Agent; no second user continuation required.
+- Additional explicit feedback appends to an existing revision without resetting stage, artifacts or automatic budgets.
+- Durable dispatch intents/receipts, native claimed/discarded observation and duplicate-command reconciliation; report send failures separately from review persistence.
+- Keep normal chat single-dispatch, stale candidate checks and original Host permissions.
+- Add real DSH command/AgentLoop/inbox/tool integration with a scripted model, plus UI-to-steer and failure regressions.
+
 ## 0.9.0
 
 - Bind media final presentation to current candidate artifact identities and checked source bytes.

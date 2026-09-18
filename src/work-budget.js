@@ -40,7 +40,7 @@ export function automaticBudgetError(kind, budget) {
 /** Entire durable review history, not just the short feedbackIds cache. */
 export function userEventSeen(run, messageId) {
   return !!messageId && ((run?.feedbackIds ?? []).includes(messageId) || (run?.history ?? []).some(event =>
-    (cycleEvents.has(event.type) || event.type === 'human_review_accepted') && event.messageId === messageId))
+    (cycleEvents.has(event.type) || event.type === 'human_review_accepted' || event.type === 'human_revision_feedback') && event.messageId === messageId))
 }
 
 export function mayContinueWork(engine, run) {

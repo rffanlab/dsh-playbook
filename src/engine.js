@@ -163,6 +163,7 @@ export class PlaybookEngine {
       machineEvidence: clone(run.machineEvidence ?? {}),
       previousCandidate: clone(run.previousCandidate ?? null),
       revisionFeedback: clone(run.revisions?.at(-1) ?? null),
+      revisionDispatch: clone(run.revisionDispatches?.at(-1) ?? null),
       reviewControl: control.reviewControl(run),
       workBudget: workBudget(this, run),
       blocker: clone(run.blocker ?? null),

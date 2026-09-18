@@ -15,9 +15,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT=true
 const { createRoot }=await import('react-dom/client')
 const workspace=await mkdtemp(join(tmpdir(),'panel-review-'))
 let client,Panel,selected='a',sequence=0
-const recorded=[],hostCommands=new Map(),tools=new Map()
+const woken=[],recorded=[],hostCommands=new Map(),tools=new Map()
 const signal=new AbortController().signal
-const agents=new Map(['a','b'].map(id=>[id,{id,session:{header:{cwd:workspace}}}]))
+const agents=new Map(['a','b'].map(id=>[id,{id,session:{header:{cwd:workspace}},steer:m=>woken.push({id,message:m})}]))
 const host={on:()=>{},effect:()=>{},provide:()=>{},inject:(_d,fn)=>fn(host),systemPrompt:{section:()=>{}},
   tools:{register:d=>tools.set(d.name,d),guard:()=>{}},commands:{register:d=>hostCommands.set(d.name,d)}}
 const engine=install(host,{define:d=>d,message:p=>({id:`notice-${++sequence}`,...p}),paths:{directory:join(workspace,'catalog'),state:join(workspace,'state.json')}})
@@ -43,7 +43,7 @@ await candidate('a');await candidate('b')
 const clientCtx={uiSession:{adapter:{current:{getSnapshot:()=>({props:{sessionId:selected}})}}},
   remote:{commands:{execute:async(id,raw)=>{
     recorded.push({id,raw})
-    const result=await hostCommands.get('playbook').handler({agent:agents.get(id),session:{id},signal,rawInput:raw.replace(/^\/playbook\s*/,'')})
+    const result=await hostCommands.get('playbook').handler({agent:agents.get(id),session:{id},signal,commandId:`ui-command-${++sequence}`,rawInput:raw.replace(/^\/playbook\s*/,'')})
     return {ok:true,value:{result}}
   }}},slots:{inject:(_name,fn)=>fn(),register:(_slot,component)=>{Panel=component}}}
 dom.window.__ModuleLoader__={load:({factory})=>{client=factory(id=>{assert.equal(id,'react');return React})}}
@@ -71,8 +71,11 @@ try {
   assert.equal(engine.status('a').run.stageId,'diagnose')
   assert.equal(engine.status('a').revisionFeedback.reason,feedback)
   assert.equal(engine.status('b').run.state,'awaiting_review')
+  assert.equal(woken.length,1);assert.equal(woken[0].id,'a');assert.equal(woken[0].message.source.kind,'plugin')
+  assert.ok(woken[0].message.content[0].text.includes(feedback))
+  assert.equal(engine.status('a').revisionDispatch.state,'queued')
   assert.equal(buttons().some(x=>x.textContent==='拒绝候选'),false)
-  console.log('PASS: actual panel button and feedback → Host command → original run revision, no cancel/start')
+  console.log('PASS: actual panel button and feedback → Host command → original run revision → actual steer invocation; no separate continuation')
 
   // Refresh onto B, replace its candidate on the server without refreshing UI.
   selected='b';await click('刷新')
