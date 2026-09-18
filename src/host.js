@@ -7,7 +7,8 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { BUILTIN_PLAYBOOKS } from './builtins.js'
 import { loadPlaybooksFromDirectory } from './catalog.js'
-import { WorkflowEngine as PlaybookEngine } from './workflow-ux.js'
+import { DeliveryEngine as PlaybookEngine } from './delivery-engine.js'
+import { createArtifactDelivery } from './artifact-delivery.js'
 import { usableController, PLUGIN_VERSION } from './controller-ux.js'
 import { createMediaDiagnostics } from './media-diagnostics.js'
 import { createIsolationManager } from './host-isolation.js'
@@ -53,10 +54,12 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   const pendingWrites = new Map()
   const isolation = createIsolationManager(ctx, engine)
   const diagnostics = createMediaDiagnostics(ctx, engine)
+  const delivery = createArtifactDelivery(ctx, engine, ready)
+  ctx.tools.guard(delivery.guard)
   ctx.tools.guard(isolation.guard)
   const recovery = createRuntimeRecovery(ctx, engine, ready)
-  const allowsControl = exec => isReportWrite(exec, pendingWrites) || isolation.isPreparation(exec) || diagnostics.allows(exec) || recovery.allows(exec)
-  ctx.tools.register(define(usableController(recovery.wrap(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects))), engine, diagnostics)))
+  const allowsControl = exec => delivery.allows(exec) || isReportWrite(exec, pendingWrites) || isolation.isPreparation(exec) || diagnostics.allows(exec) || recovery.allows(exec)
+  ctx.tools.register(define(usableController(delivery.wrap(recovery.wrap(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects)))), engine, diagnostics)))
   const basePolicy = [
     'Playbook execution policy:',
     '- For a NEW actionable task with automatic routing enabled, select a SOP before work: call playbook action=route. Ordinary explanations/chat need no SOP.',
@@ -75,6 +78,8 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     '- Plugin path/legacy incidents: automatically use recover/workspace/repair and keep the same run. Never request clearing state, cancellation, a new conversation or weaker validators as the default workaround. Intake source_paths resolves real observed reads; do not invent call IDs.',
     '- Technical/format failure: use action=repair with a specific earlier stage and concrete diagnosis within the preserved budget. Missing resources/permission: block and ask. Never cancel/start or work informally to evade a failed SOP.',
     '- Direct user text such as “拒绝候选” is a review operation; it never requires a special UI event. If review was not registered, report the real state/error and existing /playbook revise entry, not an invented button or cancel/new-run workaround.',
+    '- Media final assembly: use playbook build with the actual command and exact output_paths. Final attachments: use playbook deliver, which resolves artifact IDs and preserves checked byte snapshots. Never select an old file by name after QA.',
+    '- Delivery errors do not require a new SOP, clearing state, reauthorizing production, or substituting a previous final. Fix/retry only the indicated operation. A command observation does not establish model authorship.',
     '- Media candidates are not user acceptance. User rejection reopens the same run. Only an explicit direct-user approval can set accepted. Report facts come from action=report, never a prewritten success story.',
     '- SOPs are starter templates, not guaranteed optimal methods. Tool success is not proof of test exit code zero or semantic correctness.',
     '- A SOP never expands permissions. External publication, account actions, destructive operations and approvals still follow the user request and Host policy.',
@@ -102,7 +107,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     void engine.observeTool(String(exec.agent.id), { ...scope, name: exec.name, callId: exec.callId, isError: result.isError, receipt: toolReceipt(exec, result) })
       .catch(error => console.error(`[dsh-playbook] observation failed: ${error?.message ?? error}`))
   })
-  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); recovery.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
+  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); recovery.clear(); delivery.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
   installAutoRouting(ctx, engine, router, { ready, createMessage: message, allowsControl })
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({

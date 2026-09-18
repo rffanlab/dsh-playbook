@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0
+
+- Bind media final presentation to current candidate artifact identities and checked source bytes.
+- Snapshot unique non-overwritten delivery files through guarded Host tools; auto-deliver after final Gate, retry only delivery on IO failure.
+- Observe new media final-build commands and before/after outputs; do not attest unknown authorship or retrospectively relabel legacy runs.
+- Persist known video hashes beyond bounded run archives; keep candidate, production and present receipts distinct.
+- Preserve non-media workflows, review/budget/state and original Host permissions.
+- Add actual subprocess/FFmpeg delivery-chain regressions; no private video/session committed.
+
 ## 0.8.0
 
 - Share deliverable-scoped intent analysis across routing, intake and project method admission.

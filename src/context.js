@@ -3,6 +3,7 @@ export function stageContext(status, budget = 6000) {
   const clip = (value, cap) => { const text = typeof value === 'string' ? value : JSON.stringify(value); return text.length > cap ? text.slice(0, cap) + ' [truncated; action=status has the full record]' : text }
   const rows = [`SOP: ${status.run.playbookId}; state: ${status.run.state}`]
   if (status.workBudget) rows.push(`Work budget (per human instruction, not lifetime): ${JSON.stringify(status.workBudget)}. User-directed revisions have no fixed count cap; never cancel/recreate a task to renew a model retry allowance.`)
+  if (status.artifactDelivery) rows.push('FINAL FILE HANDOFF: playbook deliver chooses the verified current candidate and presents fixed snapshots. For a NEW media run final assembly uses playbook build(command, output_paths), not a bare untracked final overwrite. No manual user approvals or new SOP are required.')
   if (status.isolation) rows.push(`RUN OUTPUTS ONLY: ${status.isolation.realRoot ?? status.isolation.root}; prepared=${status.isolation.prepared}. Shared project/SOP identity is NOT output ownership. Use playbook workspace before work.`)
   if (status.input?.project) rows.push(`PINNED PROJECT CONTRACT (follow within Host permissions; do not mutate to pass a gate): ${clip({project:status.input.project, sop:status.input.sop, contract:status.input.contract}, 2200)}`)
   if (status.activity?.notice) rows.push(status.activity.notice)

@@ -56,6 +56,7 @@ jobs:
       - run: python3 --version && ffmpeg -version && ffprobe -version
       - run: npm run mediatest
       - run: node scripts/isolation-smoke.mjs
+      - run: node scripts/delivery-smoke.mjs
 
   client-review:
     runs-on: ubuntu-latest

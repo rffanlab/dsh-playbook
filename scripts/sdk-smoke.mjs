@@ -94,3 +94,13 @@ assert.equal(e3.status('integration-sdk').run.playbookId,'dsh-plugin-development
 assert.equal(e3.status('integration-sdk').isolation,null)
 assert.equal(e3.status('integration-sdk').input.contract.taskScope.kind,'software')
 console.log('Real SDK: media-tool integration stays in the same project and uses software stages with no video workspace.')
+
+// Artifact controller schemas with the real installed SDK; no process is executed here.
+const {DeliveryEngine}=await import('../src/delivery-engine.js')
+const {createArtifactDelivery}=await import('../src/artifact-delivery.js')
+const de=new DeliveryEngine(), dr=new PlaybookRouter(de), dm=createArtifactDelivery({tools:{}},de)
+const dt=defineTool(dm.wrap(playbookDefinition(de,async()=>[],dr)))
+for(const action of ['build','deliver','artifacts']) assert.ok(dt.parameters.properties.action.enum.includes(action))
+const artifactStatus=await dt.execute({action:'artifacts'},{agent:{id:'artifact-sdk'}})
+assert.deepEqual(artifactStatus,JSON.parse(JSON.stringify(artifactStatus)))
+console.log('Real SDK accepts artifact build/delivery schemas and canonical empty registry result; no model or Host IO executed.')

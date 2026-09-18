@@ -6,6 +6,10 @@
 
 A general DeepSeek Harness SOP plugin: a method catalog, project library, stage evidence, controlled repair and audit reports. Video production is one domain, not the engine's default task.
 
+## 0.9.0: run-bound final delivery
+
+Deliver registered candidate copies, not another filename lookup. New media builds record actual command/output observations; final submission automatically snapshots and presents the verified files. An outlet failure retries delivery, not production. Non-media workflows do not acquire video requirements. See [artifact delivery and limits](docs/ARTIFACT-DELIVERY.en.md).
+
 ## 0.8.0: deliverable-scoped selection
 
 Integrating media tools into all Sessions is an engineering/configuration task, not an MP4 request just because the manual lists video formats, TTS examples or cover paths. Recommendations, intake and admission share a deliverable analysis; project identity is separate from task type. See [task scope](docs/TASK-SCOPE.en.md) for the reproduced fault and limits.
@@ -30,7 +34,7 @@ dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 
 Restart and refresh the browser, then give a task directly. Simple clear tasks can auto-select; referenced sources/project methods require read-first intake. No routine hand-written JSON, manual method choice or start command is required.
 
-For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.8.0` identifies this runtime; pinned method versions may remain older.
+For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.9.0` identifies this runtime; pinned method versions may remain older.
 
 ## Engine and domain contracts
 

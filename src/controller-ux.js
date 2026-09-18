@@ -38,7 +38,7 @@ export function compactStatus(s) {
       calls: row.calls, successes: row.successes, failures: row.failures, lastCallId: row.lastCallId,
       receipts: (row.receipts ?? []).slice(-4),
     }])),
-    reviewControl: s.reviewControl, workBudget: s.workBudget,
+    reviewControl: s.reviewControl, workBudget: s.workBudget, artifactDelivery: s.artifactDelivery,
     revisionFeedback: s.revisionFeedback ? clip(s.revisionFeedback, 1200) : null,
     detail: 'compact; use detail=full only to read prior evidence or full feedback',
   }
@@ -83,6 +83,7 @@ export function usableController(definition, engine, { diagnose } = {}) {
       let out
       try { out = await definition.execute(args, exec) }
       catch (error) {
+        if (/^(DELIVERY_|USE_VERIFIED_|NO_VERIFIED_|NO_NEW_PRODUCTION|PRODUCTION_|CROSS_RUN_DUPLICATE|INVALID_SNAPSHOT|INVALID_DELIVERY)/.test(error.message)) return stamped({ok:false,error:{code:error.message.split(':')[0],message:error.message},hostFailure:error.hostFailure,nextAction:'inspect_exact_delivery_failure',message:'Keep the current run and QC. Do not fall back to an old final, cancel, recreate, rename, or fabricate a producer. Delivery IO failure is not failed creative work.'})
         if (error.code === 'SOP_TASK_MISMATCH') return stamped({ok:false,
           error:{code:error.code,message:error.message},taskScope:error.taskScope,
           selectedBase:error.selectedBase,suggestedBase:error.suggestedBase,
@@ -116,7 +117,7 @@ export function usableController(definition, engine, { diagnose } = {}) {
         const r=result.report
         result.report={run:r.run,summary:r.summary,recovery:r.lastGate?.recovery,blocker:r.blocker,
           candidates:(r.candidates??[]).map(c=>({revision:c.revision,at:c.at,video:c.artifacts?.video?.binding})),
-          archivedRuns:r.archivedRuns,warning:r.warning,detail:'compact; detail=full or export_report preserves complete event history'}
+          archivedRuns:r.archivedRuns,warning:r.warning,deliveries:r.deliveries,productionWitnesses:r.productionWitnesses,deliveryLimit:r.deliveryLimit,detail:'compact; detail=full or export_report preserves complete event history'}
         if (result.markdown) result.markdown='# Playbook system summary\n\n```json\n'+JSON.stringify(result.report,null,2)+'\n```\n'
       }
       if (corrections.length) result.argumentCorrections=corrections
