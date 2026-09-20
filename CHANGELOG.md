@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.2
+
+- Preserve primary video deliverables across nominal Chinese syntax and subordinate audio/asset constraints.
+- Correlate actual native question answers with pending intake; retain requirements and source receipts, never rewrite an active Run from tool prose.
+- Restore same-session original user tasks on pre-start continuation and terminate repeated unchanged scope errors through native concludeTurn when available.
+- Keep prior revision wakeup, artifact delivery, project/quality protection and Host permission boundaries.
+- Add private-log replay plus synthetic/native-driver regressions; pin coherent source-runtime CI instead of mixing incompatible prerelease packages.
+
 ## 0.9.1
 
 - Human revise/reject commands and panel rejection persist feedback then steer the same live Agent; no second user continuation required.

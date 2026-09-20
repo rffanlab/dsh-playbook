@@ -1,3 +1,4 @@
+import { guardIntakeLoops } from './intake-progress.js'
 import { readFileSync } from 'node:fs'
 import { mediaWarnings } from './media-checks.js'
 /** Model-facing ergonomics. Full durable state stays in the engine and explicit reports. */
@@ -50,7 +51,7 @@ function compactValidation(rows) {
       audio:c.video.audio} : undefined,
     timing:c.timing, semanticVerification:c.semanticVerification, speechRecognition:c.speechRecognition }))
 }
-export function usableController(definition, engine, { diagnose } = {}) {
+function baseUsableController(definition, engine, { diagnose } = {}) {
   return { ...definition,
     description: definition.description + ' Prefer compact status; detail=full is optional. repair uses stage_id + note (target_stage_id/diagnosis aliases accepted). diagnose measures existing media read-only even while awaiting review; it cannot accept/revise a candidate or grant shell access. Technical failures return the exact dependency to fix, not permission to redo everything.',
     parameters: { ...definition.parameters,
@@ -124,4 +125,8 @@ export function usableController(definition, engine, { diagnose } = {}) {
       return stamped(result)
     },
   }
+}
+
+export function usableController(definition, engine, options = {}) {
+  return guardIntakeLoops(baseUsableController(definition, engine, options), engine, options.intakeProgress)
 }

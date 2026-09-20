@@ -31,6 +31,15 @@ export function requestLead(text) {
   return out.join('\n').slice(0, 2000)
 }
 
+// A subordinate production requirement is not another requested deliverable.
+// Keep explicit 'also/separately deliver' requests as independent work.
+function supportingRequirement(raw) {
+  const t = raw.trim()
+  if (/^(?:另外|另行|另交|单独|分别|额外|同时交付|also\b|separately\b|additionally\b)/i.test(t)) return false
+  return /^(?:(?:注意(?:了)?|其中|要求|请注意|并且|且|同时|然后)\s*[:：]?\s*)?(?:配音|语音合成|语音|口播|旁白|声音|音色|画面|素材|图片|字幕|封面|渲染|voice(?:over)?|narration|audio|speech|images?|subtitles?|captions?|cover|rendering)[^\n]{0,28}(?:用|使用|采用|通过|交给|保持|来自|提供|uses?\b|using\b|with\b|via\b)/i.test(t)
+    || /^(?:用|使用|采用|通过|using\b|with\b)[^\n]{0,60}(?:配音|语音|口播|旁白|音频|音色|声音|字幕|素材|voice|narration|audio|images?|captions?)/i.test(t)
+}
+
 const negative = /^(?:但)?(?:不要|别|不用|无需|不需要|不做|不生成|不制作|不生产|不是要|不要求|禁止|do not\b|don't\b|no need\b|without\b)/i
 function clauseKind(raw) {
   const t = raw.trim().replace(/^(?:然后|同时|并且|再|then\b|and then\b)\s*/i, '')
@@ -60,6 +69,11 @@ function clauseKind(raw) {
   const review = /(?:审一下|审查|审核|评审|审一审|检查|看一下|review|audit|check)[^\n]{0,60}(?:视频|成片|video|footage|\.mp4)/i.test(t)
   if (review) return {kind:'video-review',suggestedBase:'video-review'}
   if (/(?:分析|统计|复盘|调研|研究|对比|比较|analy[sz]e|research|compare)[^\n]{0,90}(?:数据|播放|收益|日志|方案|市场|竞品|报告|视频|data|metrics|logs?|market|report|video)/i.test(t)) return {kind:'analysis'}
+  // Nominal order ('执行视频的生成') and explicit final-video heads must be
+  // recognized before inspecting their audio/image implementation requirements.
+  // Engineering/doc/review clauses above still take precedence.
+  const videoHead = t.split(/\s+(?:using|with|from)\s+/i)[0]
+  if (!/(?:audio|voice|image|cover)\s+(?:for|of)\b/i.test(videoHead) && /(?:执行|进行|开展|完成|负责)[^\n]{0,25}(?:视频|成片|短片)(?:的)?(?:生成|制作|生产|渲染|剪辑)(?:[。！!?？\s]|$)|(?:制作|生成|剪辑|组装|渲染|做成|合成|produce|create|generate|make|render)[^\n]{0,65}(?:视频|成片|短片|video|clip|mp4)(?:文件|file)?[。！!?？\s]*$/i.test(videoHead)) return {kind:'video-production'}
   if (/(?:生成|制作|画|绘制|设计|做|create|generate|draw|design|make)[^\n]{0,40}(?:封面|图片|图像|海报|cover|image|poster)/i.test(t)) return {kind:'image'}
   if (/(?:给|为)[^\n]{0,30}配音|(?:生成|合成|制作|配|转录|识别|复刻|克隆|做|generate|synthesize|produce|transcribe|clone)[^\n]{0,50}(?:配音|语音|音频|声音|歌曲|音乐|歌词|音色|TTS|ASR|audio|speech|voice|song|music)|^(?:配音|语音合成|音色复刻)/i.test(t)) return {kind:'audio'}
   if (/(?:制作|生成|剪辑|组装|渲染|合成|重做|做|produce|create|generate|make|render|edit)[^\n]{0,65}(?:视频|成片|短片|宣传片|video|clip|\.mp4)|(?:做|制作|produce)[^\n]{0,20}(?:b站|bilibili)[^\n]{0,30}(?:教程|实验|评测|tutorial|experiment)|(?:出片|成片交付)|(?:视频|video).{0,16}(?:任务书|制作任务|生产任务|production brief)/i.test(t)) return {kind:'video-production'}
@@ -73,7 +87,9 @@ function inferLead(text) {
   const prefix = topic && clauseKind(lead.slice(0, topic.index))
   const scoped = prefix && ['document','video-production','video-review','image','audio'].includes(prefix.kind) ? lead.slice(0,topic.index) : lead
   const chunks = scoped.split(/[\n，,；;。]|(?:\band (?:then |also )?)(?=(?:write|create|deploy|publish|produce|build|generate)\b)|并(?=(?:写|做|生成|发布|制作))/i)
-  const hits = chunks.map(clauseKind).filter(Boolean)
+  const classified = chunks.map(raw => ({raw, hit:clauseKind(raw)})).filter(row => row.hit)
+  const hasVideo = classified.some(row => row.hit.kind === 'video-production')
+  const hits = classified.filter(row => !hasVideo || row.hit.kind === 'video-production' || !supportingRequirement(row.raw)).map(row => row.hit)
   const kinds = [...new Set(hits.map(h=>h.kind))]
   if (!kinds.length) return {kind:'unknown',lead,kinds:[],suggestedBase:null}
   if (kinds.length > 1) return {kind:'mixed',lead,kinds,suggestedBase:null}
@@ -100,7 +116,9 @@ export function analyzeTask(task, sourceTexts = []) {
   if (producesVideo) {
     // Domain is considered only AFTER proving a video is requested. A project's
     // name, broad workspace instructions or media API examples never impose it.
-    const domainText = basis === 'requested-source-brief' ? effective.lead : direct.lead
+    const domainText = basis === 'requested-source-brief' ? effective.lead :
+      // A generic '完整成片' clarification does not erase the already stated domain.
+      [...messages.filter(m => m.kind === 'video-production').map(m => m.lead), direct.lead].join('\n')
     domain = /道家|道教|庄子|老子|道德经|逍遥游|\b(taoist|taoism|daoist|zhuangzi)\b/i.test(domainText) ? 'taoist-culture' : null
     suggestedBase = domain ? 'taoist-culture-video' : /b站|bilibili/i.test(domainText) ? 'bilibili-video-production' : 'short-video-production'
   }

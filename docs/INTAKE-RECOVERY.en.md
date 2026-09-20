@@ -1,0 +1,17 @@
+# 0.9.2: deliverable constraints, native clarification and pre-start loop control
+
+[中文](INTAKE-RECOVERY.md)
+
+The reproduced v0.9.1 error classified a Chinese nominal-order video-generation request as audio because the video phrase was missed while its voice-synthesis requirement was recognized. A subsequent actual human answer to ask_user_question did not re-enter direct-user pre-step processing, so the prepared intake retained the wrong scope. Since no Run had started, stage retry budgets did not bound repeated routing failures.
+
+Nominal-order video requests now retain their primary output when subsequent clauses specify voice, assets or subtitles. Explicit independent additional outputs remain mixed. Audio-only, images, scripts, documentation, engineering and review do not become video production.
+
+Only a successfully completed, matching native ask_user_question call can provide tool-result clarification: question IDs and selected labels/custom text are checked. Unselected descriptions, model-authored notes, unrelated text, cancelled/stale calls and late answers after a Run starts cannot rewrite a contract. Before start, genuine answers update the prepared scope while retaining the original task, requirements, project and real read receipts. Direct supplementary messages also preserve reads; a new source-document reference invalidates preparation and requires normal intake. A bare user continuation after a restart may restore the original direct-user task from that same Session, not another session or plugin instructions. No historical task starts merely because the plugin was upgraded.
+
+Three repeated pre-start SOP_TASK_MISMATCH results for the same pending task produce a concrete stalled-intake diagnostic. The public ToolExecution.concludeTurn marker ends the futile turn where supported, without creating/cancelling a Run, clearing the inbox, resetting active budgets or widening Host permissions. This is not a three-revision limit: valid selection still succeeds and actual new human input can start a new intake attempt. Without native concludeTurn, only an explicit advisory is possible and nativeTurnStop=false is reported. This is not a universal loop detector or a perfect semantic classifier.
+
+Update main under the original service account/DSH_HOME, preserve actual state, restart the Profile, and continue the original conversation. The reproduced incident has no Run, so no cancellation, state clearing, new SOP or project rename is required. runtimePluginVersion is 0.9.2; existing method snapshots remain pinned. Stopping an actively looping model turn via the UI is distinct from deleting/cancelling Playbook state.
+
+The v0.9.1 revision-command native steer fix remains. Tests separately cover classifier constraints, real-shaped human answers, malformed/stale results, no rewriting active tasks, source reads, continuation, full Host wiring and native turn conclusion. User-log replay is private; public tests contain synthetic data only.
+
+Actual driver CI uses a pinned coherent upstream source commit and its lockfile. Previously the published commands package and the other core packages belonged to incompatible prerelease families, so peer resolution failed before the driver test ran. No --force/--legacy-peer-deps is used to mix incompatible Host packages, and the plugin's production dependencies are unchanged. The driver is real, but model replies and the human-answer provider are scripted; no external model, E5 deployment, media production or general routing-accuracy claim is made.

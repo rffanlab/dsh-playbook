@@ -3,7 +3,7 @@ import { analyzeTask, recommendationFits } from './task-scope.js'
 import { mentionsSource } from './intake-policy.js'
 import { reviewFeedback } from './run-control.js'
 /** Public DSH pre-step adapter. SDK message construction is supplied by the Host entry. */
-export function installAutoRouting(ctx, engine, router, { ready = async () => {}, createMessage, onError = console.error, allowsControl = () => false } = {}) {
+export function installAutoRouting(ctx, engine, router, { ready = async () => {}, createMessage, onError = console.error, allowsControl = () => false, intakeProgress } = {}) {
   if (typeof createMessage !== 'function') throw new Error('createMessage is required')
   const seenByAgent = new WeakMap()
   const notice = text => createMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: 'dsh-playbook' } })
@@ -89,14 +89,17 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
       if (engine.attachedRun(id)) return finish(downstream)
       const oversized = raw.length > 24000
       const task = oversized ? `${raw.slice(0, 6000)}\n[路由摘要截断；完整任务仍在原用户消息中]\n${raw.slice(-6000)}` : raw
+      intakeProgress?.restoreForContinuation(agent, task)
       if (router.recommend(task).kind === 'conversation' && !router.view(id).pending) return finish(downstream)
+      const wasPending = !!router.session(id).pendingTask
       const decision = router.remember(id, task)
+      intakeProgress?.onHumanInput(id)
       if (decision.kind === 'conversation') return finish(downstream)
       let instruction
       const documentAttached = fresh.some(m => (m.content ?? []).some(b => !['text','image','audio','video'].includes(b.type)))
-      const taskScope = analyzeTask(task)
+      const taskScope = analyzeTask(router.session(id).pendingTask || task)
       const requiresIntake = taskScope.producesVideo || mentionsSource(raw) || documentAttached
-      router.projects?.capture(id, task, { attachment: documentAttached })
+      router.projects?.capture(id, task, { attachment: documentAttached, clarification:wasPending })
       if (decision.kind === 'match' && raw.length <= 4000 && !requiresIntake) {
         const routed = await router.route(id, { task, origin: 'auto', signal, exec: { agent, signal } })
         instruction = `${routed.message}\n${routed.status?.instruction ?? ''}`

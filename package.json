@@ -1,6 +1,6 @@
 {
   "name": "dsh-playbook",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Expert playbook engine with executable stages, quality gates, retries, branching, and tool policy for DeepSeek Harness",
   "type": "module",
   "main": "./src/plugin.js",
@@ -29,7 +29,8 @@
     "packcheck": "node scripts/packcheck.mjs",
     "sdkcheck": "node scripts/sdk-smoke.mjs",
     "mediatest": "python3 -m unittest discover -s test -p \"*_test.py\" -v",
-    "revisioncheck": "node scripts/revision-driver-smoke.mjs"
+    "revisioncheck": "node scripts/revision-driver-smoke.mjs",
+    "intakecheck": "node scripts/intake-driver-smoke.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-tools": "*",

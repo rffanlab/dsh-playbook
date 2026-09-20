@@ -75,7 +75,24 @@ export class ProjectLibrary {
     id(selected, 'project_id')
     return { sessionId, workspace, projectId: selected, key: hash([workspace, selected]) }
   }
-  capture(id, text, { attachment = false } = {}) {
+  clarify(sessionId, record) {
+    const sid = String(sessionId), prepared = this.prepared.get(sid)
+    if (!prepared || this.engine.status(sid).run) return
+    const task = this.router.session(sid).pendingTask
+    const taskScope = analyzeTask(task, prepared.sourceTaskTexts ?? [])
+    Object.assign(prepared, {task, taskScope, hint:taskScope.suggestedBase,
+      clarifications:[...(prepared.clarifications ?? []), structuredClone(record)].slice(-16),
+      contractDigest:hash({task, requirements:prepared.requirements, sources:prepared.sources, clarifications:record})})
+  }
+  capture(id, text, { attachment = false, clarification = false } = {}) {
+    if (clarification) {
+      if (mentionsSource(text) || attachment) {
+        // New documents must be read/intaken; preserve actual read receipts, not
+        // a stale prepared contract that predates the new source requirement.
+        this.prepared.delete(String(id)); this.sourcesRequired.add(String(id))
+      } else this.clarify(id, {source:'direct-user-message', text})
+      return
+    }
     this.prepared.delete(String(id)); this.receipts.delete(String(id))
     if (mentionsSource(text) || attachment) this.sourcesRequired.add(String(id)); else this.sourcesRequired.delete(String(id))
   }
@@ -153,7 +170,8 @@ export class ProjectLibrary {
   taskScope(prepared, raw = '') {
     // Recompute before execution. A stale pre-start hint is never a protected
     // contract; active run snapshots are still immutable and cannot use this.
-    return analyzeTask(prepared?.task || raw, prepared?.sourceTaskTexts ?? [])
+    const pending = prepared?.sessionId ? this.router.session(prepared.sessionId).pendingTask : ''
+    return analyzeTask(pending || prepared?.task || raw, prepared?.sourceTaskTexts ?? [])
   }
   assertApplicable(scope, baseId, definition) {
     const message = selectionMismatch(scope, baseId, definition)
@@ -284,7 +302,7 @@ export class ProjectLibrary {
     const taskScope = this.taskScope(prepared)
     this.assertApplicable(taskScope, baseId, definition)
     return { definition, input: { task: prepared.task, project: { id: scope.projectId, workspace: scope.workspace },
-      contract: { digest: prepared.contractDigest, requirements: prepared.requirements, sources: prepared.sources, taskScope },
+      contract: { digest: prepared.contractDigest, requirements: prepared.requirements, sources: prepared.sources, taskScope, clarifications:prepared.clarifications ?? [] },
       sop: record ? { id: record.logicalId, revision: record.revision, status: record.status, baseId: record.baseId, rules: record.rules } : { id: definition.id, status: 'builtin', version: definition.version } } }
   }
   async bindHuman(exec, projectId) {

@@ -1,3 +1,4 @@
+import { createIntakeProgress } from './intake-progress.js'
 import { createRevisionDispatcher } from './revision-dispatch.js'
 import { createRuntimeRecovery } from './runtime-recovery.js'
 import { ProjectLibrary } from './project-library.js'
@@ -32,6 +33,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   const engine = new PlaybookEngine({ persist: snapshot => writeState(paths.state, snapshot) })
   const router = new PlaybookRouter(engine, { enabled: !/^(0|false|off)$/i.test(process.env.DSH_PLAYBOOK_AUTO_ROUTE ?? '') })
   const projects = new ProjectLibrary(engine, router); router.projects = projects
+  const intakeProgress = createIntakeProgress(engine, router, { createMessage: message })
   for (const playbook of BUILTIN_PLAYBOOKS) engine.register(playbook, { source: 'builtin' })
   const reloadCatalog = async () => {
     const loaded = await loadPlaybooksFromDirectory(paths.directory)
@@ -61,7 +63,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   ctx.tools.guard(isolation.guard)
   const recovery = createRuntimeRecovery(ctx, engine, ready)
   const allowsControl = exec => delivery.allows(exec) || isReportWrite(exec, pendingWrites) || isolation.isPreparation(exec) || diagnostics.allows(exec) || recovery.allows(exec)
-  ctx.tools.register(define(usableController(delivery.wrap(recovery.wrap(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects)))), engine, diagnostics)))
+  ctx.tools.register(define(usableController(delivery.wrap(recovery.wrap(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects)))), engine, { ...diagnostics, intakeProgress })))
   const basePolicy = [
     'Playbook execution policy:',
     '- For a NEW actionable task with automatic routing enabled, select a SOP before work: call playbook action=route. Ordinary explanations/chat need no SOP.',
@@ -97,6 +99,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   const callScopes = new Map()
   ctx.on('tools/pre-execute', (exec, next) => {
     engine.noteCaller(exec)
+    intakeProgress.observeCall(exec)
     const run = exec.agent?.id ? engine.activeRun(String(exec.agent.id)) : undefined
     if (run && exec.name !== PLAYBOOK_TOOL_NAME) callScopes.set(exec.token ?? exec, { runId: run.id, stageId: run.stageId, attempt: run.stageAttempt, epoch: run.stageEpoch ?? 0 })
     return next()
@@ -105,12 +108,13 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     const token = exec.token ?? exec, scope = callScopes.get(token)
     callScopes.delete(token)
     projects.observeRead(exec, result)
+    intakeProgress.observeResult(exec, result)
     if (!scope || !exec.agent?.id) return
     void engine.observeTool(String(exec.agent.id), { ...scope, name: exec.name, callId: exec.callId, isError: result.isError, receipt: toolReceipt(exec, result) })
       .catch(error => console.error(`[dsh-playbook] observation failed: ${error?.message ?? error}`))
   })
-  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); recovery.clear(); delivery.clear(); revisionDispatcher.clear(); engine.callers.clear() }, 'dsh-playbook transient routing and call scopes')
-  installAutoRouting(ctx, engine, router, { ready, createMessage: message, allowsControl })
+  ctx.effect(() => () => { callScopes.clear(); router.sessions.clear(); pendingWrites.clear(); projects.receipts.clear(); projects.prepared.clear(); projects.sourcesRequired.clear(); isolation.clear(); diagnostics.clear(); recovery.clear(); delivery.clear(); revisionDispatcher.clear(); engine.callers.clear(); intakeProgress.clear() }, 'dsh-playbook transient routing and call scopes')
+  installAutoRouting(ctx, engine, router, { ready, createMessage: message, allowsControl, intakeProgress })
   ctx.inject(['commands'], commandCtx => {
     commandCtx.commands.register({
       name: 'playbook', description: 'SOP selection and current-session control',

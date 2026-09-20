@@ -6,6 +6,10 @@
 
 A general DeepSeek Harness SOP plugin: a method catalog, project library, stage evidence, controlled repair and audit reports. Video production is one domain, not the engine's default task.
 
+## 0.9.2: scoped requirements and native clarification
+
+Video generation with a voice constraint stays a video task. Actual native human answers update pre-start intake; repeated scope errors are bounded without clearing state or asking for another permission. See [intake recovery](docs/INTAKE-RECOVERY.en.md).
+
 ## 0.9.1: review commands wake the original Agent
 
 Reject commands/panel actions now persist feedback and use native steer to dispatch actual work. Additional feedback stays in the same revision; ordinary chat does not double-dispatch. See [revision wakeup](docs/REVISION-WAKEUP.en.md).
@@ -38,7 +42,7 @@ dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 
 Restart and refresh the browser, then give a task directly. Simple clear tasks can auto-select; referenced sources/project methods require read-first intake. No routine hand-written JSON, manual method choice or start command is required.
 
-For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.9.1` identifies this runtime; pinned method versions may remain older.
+For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.9.2` identifies this runtime; pinned method versions may remain older.
 
 ## Engine and domain contracts
 

@@ -71,12 +71,31 @@ jobs:
 
   revision-driver:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install actual Host runtime for scripted model integration
-        run: npm install --ignore-scripts --no-package-lock --no-save @deepseek-ai/cordis @deepseek-ai/dsh-agent @deepseek-ai/dsh-agent-loop @deepseek-ai/dsh-commands @deepseek-ai/dsh-session @deepseek-ai/dsh-session-projection @deepseek-ai/dsh-system-prompt
-      - run: npm ls @deepseek-ai/dsh-agent-loop @deepseek-ai/dsh-commands @deepseek-ai/dsh-llm
-      - run: npm run revisioncheck
+      - name: Check out a coherent Host runtime (published commands peer is from an older release family)
+        uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ddefc45fbc7f8e46dd73185e68295696d1297887
+          path: .harness-runtime
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - name: Install pinned-source test fixture without lifecycle scripts
+        working-directory: .harness-runtime
+        run: pnpm install --ignore-scripts --frozen-lockfile
+      - name: Link test-only runner dependencies
+        run: ln -s "$PWD/.harness-runtime/node_modules" node_modules
+      - name: Actual Host command/revision driver with a scripted model
+        env:
+          TSX_TSCONFIG_PATH: ${{ github.workspace }}/.harness-runtime/tsconfig.json
+        run: node --import tsx scripts/revision-driver-smoke.mjs
+      - name: Actual Host clarification and pre-start loop control with a scripted model
+        env:
+          TSX_TSCONFIG_PATH: ${{ github.workspace }}/.harness-runtime/tsconfig.json
+        run: node --import tsx scripts/intake-driver-smoke.mjs
