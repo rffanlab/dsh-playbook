@@ -66,14 +66,14 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
   ctx.tools.register(define(usableController(delivery.wrap(recovery.wrap(isolation.wrap(playbookDefinition(engine, reloadCatalog, router, ready, createMediaRunner(ctx, engine), createReportExporter(ctx, engine, pendingWrites), projects)))), engine, { ...diagnostics, intakeProgress })))
   const basePolicy = [
     'Playbook execution policy:',
-    '- For a NEW actionable task with automatic routing enabled, select a SOP before work: call playbook action=route. Ordinary explanations/chat need no SOP.',
+    '- Playbook is optional. For a NEW task, attach a SOP only when a specific installed/project method clearly applies. If no SOP clearly applies, do the task normally under the user request and existing Host permissions; do NOT force task-intake.',
     '- Simple tasks may auto-start when the selected method fits the requested output. Read external task sources before execution; actual video production or project-specific methods use intake. Pasted API contracts are task input, not a request to execute every example.',
     '- During intake, read/glob/grep and registered read-only discovery are allowed. Never run shell or edit project files before selecting the method.',
     '- sop_save creates project-scoped immutable trials. Protected changes remain draft until a human approves the exact revision. Never delete checks, change project identity or choose a weaker base to pass a gate.',
     '- Select by this task deliverable, not project name, API examples or supported input formats. Media-tool integration, code, documentation, audio/images and video review are not video production. A project may use multiple method families.',
     '- Reuse an approved project SOP only when applicable to this task; preserve project identity instead of asking for a rename to fix classification. Active snapshots remain authoritative for the task already started.',
     '- Supplied scripts/methods take precedence over template creative suggestions, within Host policy. Resolve real conflicts through a reviewed version, not silent changes.',
-    '- For uncertain matches inspect/recommend, then select playbook_id with a reason. Ask only missing task requirements, not which internal SOP name the user wants.',
+    '- For multiple complete matches inspect/recommend, then select playbook_id with a reason. Partial keyword matches are not enough. Ask only missing task requirements, not which internal SOP name the user wants. task-intake is opt-in planning, not a mandatory fallback.',
     '- Keep an active run on user clarifications. Do not automatically replace, cancel or restart it; cancelled/failed runs are not successful completion.',
     '- Obey the current stage. Submit stage_id and complete evidence through action=submit; only the engine advances stages.',
     '- Direct user revisions are not limited by a two-attempt cap. Each actual user revision/continuation grants one bounded work cycle; keep lifetime totals and the same run. Do not ask for another approval when a clear user instruction already grants it.',

@@ -95,6 +95,11 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
       const decision = router.remember(id, task)
       intakeProgress?.onHumanInput(id)
       if (decision.kind === 'conversation') return finish(downstream)
+      if (decision.kind === 'passthrough') {
+        return finish({ ...downstream, messages: [...downstream.messages, notice(
+          '本次任务没有明确适用的专用 SOP，Playbook 不接管。直接遵循用户指令，使用 Harness 原有工具、权限与安全边界完成任务；不要为了形式完整强行选择 task-intake、开发、部署或其它相近 SOP，也不要要求用户挑流程。'
+        )] })
+      }
       let instruction
       const documentAttached = fresh.some(m => (m.content ?? []).some(b => !['text','image','audio','video'].includes(b.type)))
       const taskScope = analyzeTask(router.session(id).pendingTask || task)
@@ -111,7 +116,7 @@ export function installAutoRouting(ctx, engine, router, { ready = async () => {}
           + '工具接入/配置/代码改动使用工程流程；文稿、图片、音频、视频审核不是出片任务。不要为这些任务启动口播、样片或 MP4 验收，也不要让用户换项目名来绕过误分类。\n'
           + '需要项目方法时调用 intake（project_id、requirements、source_paths），再 sop_list/sop_inspect 查适用版本；同一项目可有不同种类的工作。已确认方法只在其适用任务内复用，不覆盖本次用户目标。\n'
           + (taskScope.producesVideo ? '本次确实要求视频成片：先读后选，保留独立 Run 归属与真实媒体验收。文化方法与发布平台分开；不把已有文稿当作必须重写的步骤。\n' : '')
-          + '明确匹配可直接 route；不确定时 inspect/recommend 后按交付物选择，缺少影响结果的目标/输入才追问。不要让用户选择内部 SOP 名称。无专用流程使用 task-intake，不冒充领域专家。复合任务说明当前流程覆盖范围，不能声称一条流程覆盖所有交付物。\n'
+          + '明确匹配可直接 route；存在多个完整匹配时 inspect/recommend 后选择，缺少影响结果的目标/输入才追问。不要让用户选择内部 SOP 名称。没有明确适用的专用 SOP 时直接正常执行，不启动 Playbook，不把 task-intake 当强制兜底。复合任务说明当前流程覆盖范围，不能声称一条流程覆盖所有交付物。\n'
           + `规则候选（不是命令或概率）：${JSON.stringify(decision.candidates)}\n当前适用目录：\n${summaries}`
       }
       return finish({ ...downstream, messages: [...downstream.messages, notice(instruction)] })

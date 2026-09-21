@@ -53,7 +53,7 @@ export function isConversation(text) {
   return /(?:是什么|什么意思|怎么用|如何使用|什么区别|能做什么)[?？。\s]*$/i.test(text)
 }
 function looksLikeWork(text) {
-  return /帮我|请|麻烦|帮忙|处理|同步|注册|接入|集成|更新|修|排查|恢复|部署|安装|开发|新增|实现|制作|生成|创作|整理|写|审|检查|分析|统计|复盘|调研|补全|完善|发布|发行|准备|启动不了|宕机|故障|\b(fix|debug|build|implement|create|write|produce|generate|review|audit|check|analy[sz]e|research|deploy|install|configure|prepare|release|restore|migrate|design|serve|add)\b/i.test(text)
+  return /帮我|请|麻烦|帮忙|处理|同步|注册|接入|集成|更新|删除|删掉|删了|卸载|移除|修|排查|恢复|部署|安装|开发|新增|实现|制作|生成|创作|整理|写|审|检查|分析|统计|复盘|调研|补全|完善|发布|发行|准备|启动不了|宕机|故障|\b(fix|debug|build|implement|create|write|produce|generate|review|audit|check|analy[sz]e|research|deploy|install|uninstall|remove|delete|configure|prepare|release|restore|migrate|design|serve|add)\b/i.test(text)
 }
 export function recommendPlaybook(task, catalog) {
   const original = requireTask(task), text = intentText(original), taskScope = analyzeTask(original)
@@ -76,13 +76,20 @@ export function recommendPlaybook(task, catalog) {
   candidates.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
   const top = candidates[0], second = candidates[1]
   const compound = /然后|同时|并且|以及|并(?:写|做|生成|发布)|\band (?:then |also )?(?:write|create|deploy|publish|produce)\b/i.test(text)
+  const complete = candidates.filter(candidate => candidate.complete)
   const confident = !!top?.complete && top.autoStart && looksLikeWork(text)
     && (!second?.complete || top.score - second.score >= 10)
     && !(compound && second?.complete) && taskScope.kind !== 'mixed'
-  return { kind: confident ? 'match' : candidates.length ? 'ambiguous' : looksLikeWork(text) ? 'unmatched' : 'conversation',
-    taskScope, confidence: confident ? 'high' : candidates.length ? 'low' : 'none',
+  const work = looksLikeWork(text)
+  const kind = confident ? 'match'
+    : complete.length ? 'ambiguous'
+    : work ? 'passthrough'
+    : 'conversation'
+  return { kind, taskScope, confidence: confident ? 'high' : complete.length ? 'low' : 'none',
     recommendedId: confident ? top.id : null, candidates: candidates.slice(0, 5),
-    reason: confident ? `按交付意图匹配：${top.matched.join(' / ')}` : '规则不足以唯一确定流程；由 Agent 根据用户目标选择，缺关键信息时才追问。' }
+    reason: confident ? `按交付意图匹配：${top.matched.join(' / ')}`
+      : kind === 'passthrough' ? '没有明确适用的专用 SOP；Playbook 不接管本次任务，由 Harness 按用户指令正常执行。'
+      : '存在多个完整匹配流程；由 Agent 根据用户目标选择，缺关键信息时才追问。' }
 }
 
 /** Session-local selection context; accepted selections are durable in run.input.routing. */
@@ -95,7 +102,7 @@ export class PlaybookRouter {
   }
   session(id) {
     const key = String(id)
-    if (!this.sessions.has(key)) this.sessions.set(key, { enabled: this.enabled, pendingTask: '', lastDecision: null })
+    if (!this.sessions.has(key)) this.sessions.set(key, { enabled: this.enabled, pendingTask: '', lastTask: '', lastDecision: null, bypassed: false })
     return this.sessions.get(key)
   }
   setAuto(id, enabled) {
@@ -109,28 +116,53 @@ export class PlaybookRouter {
   remember(id, task) {
     const state = this.session(id)
     const incoming = requireTask(task)
+    // A passthrough task is complete from Playbook's perspective. Keep it
+    // available within the same model turn for optional inspection, but never
+    // merge it into a later unrelated direct-user task.
+    if (state.bypassed) state.pendingTask = ''
     const combined = state.pendingTask && state.pendingTask !== incoming ? `${state.pendingTask}\n用户补充 / Clarification: ${incoming}` : incoming
     state.pendingTask = combined.length <= 24000 ? combined : `${combined.slice(0, 12000)}\n[中间内容省略，见原对话]\n${combined.slice(-10000)}`
+    state.lastTask = state.pendingTask
     state.lastDecision = this.recommend(state.pendingTask)
-    if (state.lastDecision.kind === 'conversation') state.pendingTask = ''
+    state.bypassed = state.lastDecision.kind === 'passthrough'
+    if (state.lastDecision.kind === 'conversation') { state.pendingTask = ''; state.bypassed = false }
+    return state.lastDecision
+  }
+  clarify(id, task) {
+    const state = this.session(id)
+    const incoming = requireTask(task)
+    const base = state.pendingTask || state.lastTask
+    const combined = base && base !== incoming ? `${base}\n用户补充 / Clarification: ${incoming}` : incoming
+    state.pendingTask = combined.length <= 24000 ? combined : `${combined.slice(0, 12000)}\n[中间内容省略，见原对话]\n${combined.slice(-10000)}`
+    state.lastTask = state.pendingTask
+    state.lastDecision = this.recommend(state.pendingTask)
+    state.bypassed = state.lastDecision.kind === 'passthrough'
+    if (state.lastDecision.kind === 'conversation') { state.pendingTask = ''; state.bypassed = false }
     return state.lastDecision
   }
   view(id) {
     const state = this.session(id)
-    return { enabled: state.enabled, pending: !!state.pendingTask && !this.engine.attachedRun(id), lastDecision: structuredClone(state.lastDecision) }
+    return { enabled: state.enabled, pending: !!state.pendingTask && !state.bypassed && !this.engine.attachedRun(id), bypassed: state.bypassed, lastDecision: structuredClone(state.lastDecision) }
   }
-  clear(id) { this.session(id).pendingTask = '' }
+  clear(id) { const state = this.session(id); state.pendingTask = ''; state.bypassed = false }
   async route(id, { task, playbookId, note = '', origin = 'agent', signal, exec, sopId, revision } = {}) {
     const work = async () => {
       signal?.throwIfAborted()
       if (this.engine.attachedRun(id)) return { ok: true, reused: true, status: this.engine.status(id), message: '当前 SOP 尚未结束（可能处于阻塞状态）；不会自动替换或取消。新任务请另开会话或由用户明确取消当前流程。' }
       const state = this.session(id)
       if (origin === 'agent' && this.engine.status(id).run && !state.pendingTask) throw new Error('Previous run is terminal. A fresh user task or /playbook start is required; do not restart to reset budgets.')
-      const actual = requireTask(state.pendingTask || task)
+      const actual = requireTask(state.pendingTask || task || state.lastTask)
       const decision = this.recommend(actual)
       const selected = sopId || playbookId || decision.recommendedId
-      if (!selected) return { ok: true, needsSelection: true, decision, fallbackId: 'task-intake',
-        message: '请 Agent 根据实际目标选择 SOP，再用 action=route、playbook_id、note 调用。只在交付物/范围不明确时向用户追问，不要求用户挑 SOP 名称。' }
+      if (decision.kind === 'passthrough' && origin !== 'command' && !sopId) {
+        state.pendingTask = ''
+        state.bypassed = true
+        state.lastDecision = { ...decision, selectedId: null }
+        return { ok: true, passthrough: true, decision: state.lastDecision,
+          message: '没有明确适用的专用 SOP。本次不启动 Playbook，也不使用 task-intake 兜底；按用户指令和 Harness 原有工具/权限正常执行。' }
+      }
+      if (!selected) return { ok: true, passthrough: true, decision,
+        message: '没有明确适用的专用 SOP。本次不启动 Playbook；直接按用户指令正常执行。只有用户明确要求规划流程时才使用 task-intake。' }
       const authorized = this.projects && origin !== 'command' ? this.projects.authorize(exec ?? { agent: { id } }, { playbookId: selected, sopId, revision, task: actual }) : {}
       if (!authorized.definition && !this.engine.getPlaybook(selected)) throw new Error(`unknown playbook: ${selected}`)
       if (playbookId && playbookId !== decision.recommendedId && (typeof note !== 'string' || note.trim().length < 8)) throw new Error('semantic selection requires note explaining the fit (at least 8 characters)')
@@ -140,6 +172,7 @@ export class PlaybookRouter {
         reason: note || decision.reason, confidence: decision.confidence,
       } }, { signal, definition: authorized.definition })
       state.pendingTask = ''
+      state.bypassed = false
       state.lastDecision = { ...decision, selectedId: selected }
       return { ok: true, started: true, decision: state.lastDecision, status,
         message: `已采用 ${selected} SOP。先用一句话告知用户所选流程，然后按当前阶段执行；每阶段提交 evidence，不重复询问用户是否选它。` }

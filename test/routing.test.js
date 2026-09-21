@@ -56,19 +56,22 @@ test('recommend is read-only; route starts once, pins selection and preserves ac
   assert.equal(e.status('s').run.playbookId,'bug-fix')
   assert.equal(e.status('s').input.routing.method,'rule')
 })
-test('semantic choice requires a reason and preserves original request through clarification', async () => {
+test('passthrough tasks do not require a vaguely related SOP and later tasks do not inherit them', async () => {
   const e = fixture(), r = new PlaybookRouter(e)
-  r.remember('s', '请帮我整理这个任务'); r.remember('s','需要公众号文章，不需要视频')
-  await assert.rejects(r.route('s',{playbookId:'wechat-article'}), /note/)
-  const out = await r.route('s',{playbookId:'wechat-article',note:'用户补充明确要求产出公众号文章'})
-  assert.ok(out.status.input.task.includes('请帮我整理这个任务'))
-  assert.ok(out.status.input.task.includes('需要公众号文章'))
+  const first = r.remember('s', '请帮我整理这个任务')
+  assert.equal(first.kind, 'passthrough')
+  assert.equal(r.guard('s','bash'), undefined)
+  const second = r.remember('s','帮我写一篇公众号文章，不需要视频')
+  assert.equal(second.recommendedId, 'wechat-article')
+  const out = await r.route('s',{playbookId:'wechat-article',note:'用户明确要求产出公众号文章'})
+  assert.equal(out.status.run.playbookId,'wechat-article')
+  assert.ok(!out.status.input.task.includes('请帮我整理这个任务'))
 })
-test('pending work must route first, but PTC transport and clarification remain possible', () => {
-  const r = new PlaybookRouter(fixture()); r.remember('s','请帮我处理这个任务')
-  assert.ok(r.guard('s','bash')); assert.equal(r.guard('s','playbook'),undefined); assert.equal(r.guard('s','run_code'),undefined)
-  assert.equal(r.guard('s','ask_user_question'),undefined)
-  r.setAuto('s', false); assert.equal(r.guard('s','bash'),undefined)
+test('passthrough work is not gated; only real SOP selection can gate tools', () => {
+  const r = new PlaybookRouter(fixture()); const d=r.remember('s','请帮我处理这个任务')
+  assert.equal(d.kind,'passthrough'); assert.equal(r.guard('s','bash'),undefined); assert.equal(r.guard('s','playbook'),undefined)
+  r.remember('t','修复bug并写篇公众号')
+  assert.ok(r.guard('t','bash')); assert.equal(r.guard('t','run_code'),undefined); assert.equal(r.guard('t','ask_user_question'),undefined)
 })
 test('pre-aborted selection does not create a run', async () => {
   const e=fixture(), r=new PlaybookRouter(e)
@@ -77,4 +80,12 @@ test('pre-aborted selection does not create a run', async () => {
 })
 test('an explicit writing request is not downgraded to a usage question',()=>{
   assert.equal(recommendPlaybook('帮我写篇公众号文章解释SOP是什么',fixture().listPlaybooks()).recommendedId,'wechat-article')
+})
+
+test('plugin uninstall is passthrough despite partial plugin/model keyword candidates', async()=>{
+  const e=fixture(),r=new PlaybookRouter(e),d=r.recommend('把model-mgr 这个插件删了吧。')
+  assert.equal(d.kind,'passthrough');assert.equal(d.recommendedId,null);assert.ok(d.candidates.some(c=>c.id==='dsh-plugin-development'&&!c.complete))
+  r.remember('s','把model-mgr 这个插件删了吧。')
+  const out=await r.route('s',{playbookId:'task-intake',note:'No dedicated uninstall SOP; old behavior tried task-intake.'})
+  assert.equal(out.passthrough,true);assert.equal(e.runs.size,0);assert.equal(r.guard('s','bash'),undefined)
 })

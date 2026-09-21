@@ -6,6 +6,12 @@
 
 A general DeepSeek Harness SOP plugin: a method catalog, project library, stage evidence, controlled repair and audit reports. Video production is one domain, not the engine's default task.
 
+## 0.9.3: no matching SOP means normal execution
+
+Playbook now takes control **only when a method clearly applies**. Straightforward maintenance such as uninstalling a plugin proceeds under the user request and normal Harness permissions when no dedicated SOP exists. Partial words such as “plugin” or “model” are hints, not a reason to force development/deployment, and task-intake is opt-in rather than a mandatory fallback.
+
+See [optional SOP / passthrough behavior](docs/OPTIONAL-SOP.en.md).
+
 ## 0.9.2: scoped requirements and native clarification
 
 Video generation with a voice constraint stays a video task. Actual native human answers update pre-start intake; repeated scope errors are bounded without clearing state or asking for another permission. See [intake recovery](docs/INTAKE-RECOVERY.en.md).
@@ -25,7 +31,7 @@ Integrating media tools into all Sessions is an engineering/configuration task, 
 | Request | Method family |
 |---|---|
 | Develop a video plugin, integrate a CLI, fix rendering code | Appropriate software/configuration workflow |
-| Write docs, a video script or subtitles only | Document workflow or explicit generic intake |
+| Write docs, a video script or subtitles only | Applicable writing workflow; otherwise normal execution without Playbook |
 | Create only audio, narration, an image or a cover | That deliverable, not a complete video |
 | Review an existing video | Review, not production from scratch |
 | Produce a complete video | Applicable production SOP and real media checks |
@@ -42,7 +48,7 @@ dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 
 Restart and refresh the browser, then give a task directly. Simple clear tasks can auto-select; referenced sources/project methods require read-first intake. No routine hand-written JSON, manual method choice or start command is required.
 
-For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.9.2` identifies this runtime; pinned method versions may remain older.
+For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.9.3` identifies this runtime; pinned method versions may remain older.
 
 ## Engine and domain contracts
 

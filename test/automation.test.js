@@ -66,3 +66,10 @@ test('long requests are handed to Agent selection instead of auto-starting from 
   const f=setup(),a=agent('s');await step(f,a,[user('u1','修复接口bug。'+ '背景信息。'.repeat(1000))])
   assert.equal(f.e.runs.size,0);assert.equal(f.r.view('s').pending,true)
 })
+
+test('unknown maintenance task bypasses Playbook and leaves normal tools available',async()=>{
+  const f=setup(),a=agent('s'),out=await step(f,a,[user('u1','把model-mgr 这个插件删了吧。')])
+  assert.equal(f.e.runs.size,0);assert.equal(f.r.view('s').pending,false);assert.equal(f.r.view('s').lastDecision.kind,'passthrough')
+  assert.equal(f.guards.map(g=>g({agent:a,name:'bash'})).find(Boolean),undefined)
+  assert.match(out.messages.at(-1).content[0].text,/Playbook 不接管/)
+})

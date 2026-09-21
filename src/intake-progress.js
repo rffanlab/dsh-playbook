@@ -55,7 +55,7 @@ export function createIntakeProgress(engine, router, { createMessage } = {}) {
     if (!texts.length) return false
     const text = texts.join('；'), original = router.session(entry.id).pendingTask
     if (original.length + text.length + 40 > 24000) return false // Never truncate the original contract to fit an answer.
-    router.remember(entry.id, text)
+    router.clarify(entry.id, text)
     router.projects?.clarify(entry.id, {source:'host-ask-user-result',callId:String(exec.callId),text})
     onHumanInput(entry.id)
     if (createMessage && typeof exec.agent.inject === 'function') {

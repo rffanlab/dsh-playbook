@@ -81,3 +81,39 @@ async function scenario(clarify){
 }
 await scenario(true)
 await scenario(false)
+
+
+async function passthroughScenario(){
+  let maintenanceCalls=0
+  const adapter=new Scripted([
+    {name:'maintenance_action',args:{target:'dsh-model-mgr'}},
+    {},
+  ]),ctx=new Context()
+  for(const plugin of [LlmRuntime,SessionStore,Projections,SystemPrompt,Tools,AgentRegistry])await ctx.plugin(plugin)
+  await ctx.plugin(AgentLoop,{agents:[]})
+  ctx.llm.registerAdapter(['scripted-intake'],adapter)
+  const workspace=await mkdtemp(join(tmpdir(),'native-passthrough-'))
+  const engine=install(ctx,{define:defineTool,message:createUserMessage,paths:{directory:join(workspace,'sops'),state:join(workspace,'state.json')}})
+  ctx.tools.register(defineTool({name:'maintenance_action',description:'Synthetic normal Harness maintenance action; not a Playbook workflow.',
+    parameters:{target:{type:'string',required:true}},
+    output:{schema:{type:'object',additionalProperties:true},render:(_a,v)=>[{type:'text',text:JSON.stringify(v)}]},
+    execute:async args=>{maintenanceCalls++;return {removed:args.target}}}))
+  const agent=await ctx.agentLoop.create(SessionId('passthrough-uninstall'),{provider:'scripted-intake',model:'no-real-model'},{cwd:workspace})
+  try{
+    await ctx.tools.execute({name:'playbook',callId:ToolCallId('ready-pass'),agent,signal:new AbortController().signal,arguments:{action:'list'}})
+    agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'把model-mgr 这个插件删了吧。'}]}))
+    await bounded(agent.whenIdle(),'native passthrough')
+    await engine.queue
+    assert.equal(maintenanceCalls,1)
+    assert.equal(engine.runs.size,0,'passthrough must not create task-intake or a vaguely related run')
+    assert.equal(adapter.requests.length,2)
+    const events=agent.session.snapshotEvents()
+    assert.equal(events.filter(e=>e.type==='turn/start').length,1)
+    assert.ok(JSON.stringify(events.filter(e=>e.type==='tool/result')).includes('dsh-model-mgr'))
+    console.log('PASS actual AgentLoop: plugin uninstall has no dedicated SOP, normal Harness maintenance tool executes once, and no Playbook Run is created.')
+  }finally{
+    if(agent.status==='running'){agent.cancel({kind:'disposed'});await agent.whenIdle()}
+    await engine.queue;await rm(workspace,{recursive:true,force:true})
+  }
+}
+await passthroughScenario()

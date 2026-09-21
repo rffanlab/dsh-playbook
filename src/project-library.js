@@ -165,7 +165,7 @@ export class ProjectLibrary {
     this.prepared.set(scope.sessionId, prepared)
     return { ok: true, project: { id: scope.projectId, workspace: scope.workspace }, contractDigest: prepared.contractDigest,
       suggestedBase: hint, taskScope, requirements, sources: prepared.sources, projectSops: this.list(exec),
-      next: 'Choose by this task deliverable, not project name or media words in API examples. Reuse a compatible project SOP; if none applies, select a matching installed workflow or task-intake. No project rename, SOP rewrite or user unlock is needed to correct a pre-start classification.' }
+      next: 'Choose by this task deliverable, not project name or media words in API examples. Reuse a compatible project SOP when one clearly applies. If none applies, do the task normally without Playbook; task-intake is only for explicit planning/intake needs. No project rename, SOP rewrite or user unlock is needed.' }
   }
   taskScope(prepared, raw = '') {
     // Recompute before execution. A stale pre-start hint is never a protected

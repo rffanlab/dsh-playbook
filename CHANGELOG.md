@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.3
+
+- Make Playbook opt-in by applicability: no clear SOP means normal Harness execution, not mandatory task-intake.
+- Treat partial keyword hits as hints only; do not route plugin removal to plugin development/model deployment just because names contain plugin/model.
+- Agent-side route to task-intake cannot override a passthrough decision; users may still manually start task-intake when they explicitly want structured intake/planning.
+- Keep strong SOP gates once a matching workflow is actually attached; passthrough does not weaken Host permissions or an active run.
+- Add regression coverage from the dsh-model-mgr uninstall session and generic unknown-task execution.
+
 ## 0.9.2
 
 - Preserve primary video deliverables across nominal Chinese syntax and subordinate audio/asset constraints.

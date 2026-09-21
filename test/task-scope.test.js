@@ -168,9 +168,11 @@ test('recommendations and intake agree on non-media purpose even with many media
   assert.equal(d.taskScope.producesVideo,false)
   assert.ok(d.candidates.every(c=>!['short-video-production','bilibili-video-production','taoist-culture-video','video-review'].includes(c.id)))
 })
-test('unclassified input is not rejected or converted to mandatory media work',async()=>{
+test('unclassified input passes through instead of forcing task-intake',async()=>{
   const f=fixture(),a=await f.intake('处理一下这个项目里的材料')
   assert.equal(a.taskScope.kind,'unknown');assert.equal(a.suggestedBase,null)
-  const out=await f.t.execute({action:'route',playbook_id:'task-intake',note:'No specialized task was specified; define actual outputs first'},f.exec)
-  assert.equal(out.status.run.playbookId,'task-intake')
+  const out=await f.t.execute({action:'route',playbook_id:'task-intake',note:'Old fallback attempted task-intake despite no dedicated method.'},f.exec)
+  assert.equal(out.passthrough,true);assert.equal(f.e.runs.size,0)
+  const manual=await f.t.execute({action:'start',playbook_id:'task-intake',input:{task:'用户明确要求结构化接单规划'}},f.exec)
+  assert.equal(manual.status.run.playbookId,'task-intake')
 })
