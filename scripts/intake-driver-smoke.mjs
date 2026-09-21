@@ -38,7 +38,7 @@ class Scripted extends LlmAdapter {
 function bounded(p,label){let timer;return Promise.race([p,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(label+' timed out')),20000)})]).finally(()=>clearTimeout(timer))}
 async function scenario(clarify){
   const intake={name:'playbook',args:{action:'intake',project_id:'test-project',requirements:['Keep owner voice and current Host permissions.']}}
-  const wrong={name:'playbook',args:{action:'route',playbook_id:'short-video-production',note:'Synthetic video selection to test the intake control contract.'}}
+  const wrong={name:'playbook',args:{action:'route',playbook_id:clarify?'short-video-production':'dsh-plugin-development',note:clarify?'Synthetic video selection to test the intake control contract.':'Synthetic wrong software selection for an explicit video deliverable.'}}
   const question={name:'ask_user_question',args:{questions:[{id:'deliverable',question:'本次交付物是完整成片还是口播音频？'}]}}
   const steps=clarify?[intake,question,wrong,{}]:[intake,wrong,wrong,wrong]
   const adapter=new Scripted(steps),ctx=new Context()
@@ -56,7 +56,7 @@ async function scenario(clarify){
     // Wait for plugin hydration before defining the test-only non-media workflow.
     await ctx.tools.execute({name:'playbook',callId:ToolCallId('ready'),agent,signal:new AbortController().signal,arguments:{action:'list'}})
     engine.register({id:'short-video-production',stages:[{id:'brief',objective:'Fixture method admission only; no video generation',gate:{evidence:['goal']}}]})
-    agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'只制作口播音频'}]}))
+    agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:clarify?'只制作口播音频':'制作完整视频成片'}]}))
     await bounded(agent.whenIdle(),'native intake')
     await engine.queue
     const events=agent.session.snapshotEvents()

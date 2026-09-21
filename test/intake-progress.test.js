@@ -161,10 +161,10 @@ test('full wiring: native question result updates intake before the next model t
  assert.equal(out.started,true);assert.equal(out.status.run.stageId,'brief')
 })
 test('full wiring: repeated wrong route returns terminal diagnosis instead of 60+ attempts',async t=>{
- const h=await wired(t,'只制作口播音频');await h.call({action:'intake',project_id:'audio-project',requirements:['只做音频']})
+ const h=await wired(t,'制作完整视频成片');await h.call({action:'intake',project_id:'video-project',requirements:['交付完整视频']})
  let stops=0;h.exec.concludeTurn=()=>{stops++}
  let out
- for(let i=0;i<3;i++)out=await h.call({action:'route',playbook_id:'short-video-production',note:'Incorrectly selecting video as a synthetic regression.'})
+ for(let i=0;i<3;i++)out=await h.call({action:'route',playbook_id:'dsh-plugin-development',note:'Incorrectly selecting software for an explicit video deliverable.'})
  assert.equal(stops,1);assert.equal(out.nextAction,'report_intake_stall');assert.equal(h.e.runs.size,0)
 })
 
