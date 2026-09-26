@@ -34,7 +34,7 @@ export function videoSop(original) {
       'Listen/view via available modalities. The plugin decodes the source audio and pilot video, checks nonzero PCM, gaps and duration. This is not speech recognition or an aesthetic verdict.',
     ], [text('pipeline_command'), list('pilot_observations')], 'pilot', 'script'),
     stage('produce', '按完整段落制作全片 / Produce from the verified script and pilot', [
-      'Generate all segments from their exact approved text, preserving id order. Fill each segment audio,start,end using measured audio durations; no arbitrary four-second holds.',
+      'Generate all segments from their exact approved text, preserving id order. Canonical manifest shape: segments:[{\"id\":\"s1\",\"text\":\"...\",\"audio\":\"work/s1.wav\",\"start\":0.0,\"end\":3.2}]. Fill every segment audio,start,end from measured source audio/timeline; no arbitrary holds. A top-level segmentTiming[id]{audio,start,end} compatibility shape is accepted, so do not rewrite valid data only for schema style.',
       'Render video, PNG/JPEG/WebP cover, title Markdown and timed SRT. Fill video,cover,title,subtitles,durationSeconds,coverForVideoSha256 in production.json.',
       'Keep natural voice pace. Fix a missing TTS input at its source, not by changing speed or filling silence. Any script change needs action=repair target script.',
       'Cover claims must match this final version. Technical metadata does not prove image text; inspect the actual cover. Use no platform-ranking claims without a source.',
@@ -43,7 +43,7 @@ export function videoSop(original) {
       'Submit production_manifest for independent read-only checks. release_ready=true and FFmpeg exit zero cannot substitute for media contents.',
       'The worker validates canonical script/segment coverage, every source audio, full video/audio decode, all-zero audio, long low-level gaps, audio timeline, SRT bounds and full text coverage, cover decode and version metadata.',
       'Defaults (-40dB RMS per 100ms window, max 3s low gap, max 50% low windows) are narrated-video test policy, not platform policy. Music can mask absent narration; speech meaning and aesthetics remain separate.',
-      'If checks fail, use bounded action=repair to the smallest affected stage and revalidate dependent artifacts. Do not keep editing outside a failed SOP.',
+      'If checks fail, obey the validator diagnostic code/path/hint (especially MANIFEST_*). Fix the named field or dependency, then resubmit. Do not repeatedly reread an unchanged production.json or inspect dsh-playbook source to guess the validator contract. Use bounded action=repair only when an earlier stage really must change.',
     ], [text('qa_scope')], 'video', 'produce'),
     stage('content-review', '检查内容而非装饰 / Review actual explanation and speech', [
       'Compare the actual speech and subtitles with the full approved script using available hearing/vision. A progress bar or changing timestamp is not meaningful explanation.',

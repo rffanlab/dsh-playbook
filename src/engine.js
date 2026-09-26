@@ -208,6 +208,11 @@ export class PlaybookEngine {
       if (event.receipt && event.receipt.callId === callId && event.receipt.tool === event.name) {
         row.receipts = [...(row.receipts ?? []), clone(event.receipt)].slice(-16)
       }
+      run.recentToolCalls = [...(run.recentToolCalls ?? []), {
+        name: event.name, callId, argumentHash: event.receipt?.argumentHash ?? null,
+        stageId: event.stageId ?? run.stageId, epoch: event.epoch ?? (run.stageEpoch ?? 0),
+        isError: Boolean(event.isError), at: event.at ?? nowIso(this.clock),
+      }].slice(-16)
       run.toolResultsObserved = (run.toolResultsObserved ?? 0) + 1
       row.calls += 1
       if (event.isError) row.failures += 1

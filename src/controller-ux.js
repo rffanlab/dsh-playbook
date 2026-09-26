@@ -46,7 +46,7 @@ export function compactStatus(s) {
 }
 function compactValidation(rows) {
   return rows?.map(c => ({ kind:c.kind, status:c.status, passed:c.passed, failures:c.failures,
-    warnings:c.warnings, pathResolution:c.pathResolution, coverage:c.coverage, cache:c.cache, callId:c.callId,
+    warnings:c.warnings, diagnostic:c.diagnostic, manifestNormalization:c.manifestNormalization, pathResolution:c.pathResolution, coverage:c.coverage, cache:c.cache, callId:c.callId,
     video: c.video ? {path:c.video.binding?.path,sha256:c.video.binding?.sha256,durationSeconds:c.video.durationSeconds,
       audio:c.video.audio} : undefined,
     timing:c.timing, semanticVerification:c.semanticVerification, speechRecognition:c.speechRecognition }))

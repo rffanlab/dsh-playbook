@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
 
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]))
+  return value
+}
+export function argumentFingerprint(value) {
+  try { return createHash('sha256').update(JSON.stringify(canonical(value ?? null))).digest('hex') }
+  catch { return null }
+}
+
 /** No output/log parsing: only the canonical foreground result is authoritative. */
 export function commandFingerprint(command) {
   return typeof command === 'string' ? createHash('sha256').update(command).digest('hex') : null
@@ -7,6 +17,7 @@ export function commandFingerprint(command) {
 export function toolReceipt(exec, result) {
   const value = result?.value
   const commandHash = commandFingerprint(exec?.arguments?.command)
+  const argumentHash = argumentFingerprint(exec?.arguments)
   let outcome = 'unknown', exitCode = null
   if (result?.isError === true) outcome = 'tool-error'
   else if (value?.kind === 'background') outcome = 'background'
@@ -20,7 +31,7 @@ export function toolReceipt(exec, result) {
       outcome = exitCode === 0 ? 'exit-zero' : 'exit-nonzero'
     }
   }
-  return { callId: String(exec.callId), tool: String(exec.name), commandHash, outcome, exitCode }
+  return { callId: String(exec.callId), tool: String(exec.name), commandHash, argumentHash, outcome, exitCode }
 }
 
 /** A receipt proves which command exited, not whether that command is a good test. */

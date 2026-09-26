@@ -95,7 +95,7 @@ export function install(ctx, { define, message, paths = pathsFromEnvironment() }
     const enabled = router.view(id).enabled
     return `${basePolicy}\nAutomatic routing: ${enabled ? 'on' : 'off; do not start a SOP unless explicitly requested'}\n${enabled ? engine.listPlaybooks().map(p => `${p.id}: ${p.name}`).join('\n') : ''}`
   } })
-  ctx.tools.guard(exec => allowsControl(exec) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME) : undefined)
+  ctx.tools.guard(exec => allowsControl(exec) ? undefined : exec.agent?.id ? engine.policyDecision(String(exec.agent.id), exec.name, PLAYBOOK_TOOL_NAME, exec.arguments) : undefined)
   const callScopes = new Map()
   ctx.on('tools/pre-execute', (exec, next) => {
     engine.noteCaller(exec)

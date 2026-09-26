@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { WorkflowEngine } from '../src/workflow-ux.js'
+import { WorkflowEngine, recoveryFor } from '../src/workflow-ux.js'
 import { PlaybookEngine } from '../src/engine.js'
 import { reviewFeedback } from '../src/run-control.js'
 import { usableController, normalizeAction, compactStatus } from '../src/controller-ux.js'
@@ -8,6 +8,7 @@ import { playbookDefinition } from '../src/tool.js'
 import { PlaybookRouter } from '../src/routing.js'
 import { installAutoRouting } from '../src/automation.js'
 import { createMediaDiagnostics } from '../src/media-diagnostics.js'
+import { argumentFingerprint } from '../src/receipts.js'
 
 const stage = (id, kind) => ({id,objective:id,gate:{evidence:[{key:'production_manifest',type:'string'}],...(kind?{validators:[{kind,pathKey:'production_manifest'}]}:{})},retry:{maxAttempts:2,onExhausted:'branch:produce'}})
 const book={id:'fixture',delivery:{review:true,revisionStage:'diagnose',maxRevisions:2,maxSelfRepairs:3,repairStages:['script','pilot','produce','qa','content-review']},
@@ -137,4 +138,23 @@ test('automatic recovery cannot exceed the global gate budget or repair an owner
   const e2=await fixture(),bad=check('video',{passed:false,status:'fail',failures:['RUN_OWNERSHIP_MISMATCH: foreign artifact']})
   const rejected=await e2.submit('s',{stageId:'qa',evidence:ev,runtimeChecks:[bad]})
   assert.equal(rejected.lastGate.passed,false);assert.equal(rejected.recovery,undefined)
+})
+
+test('small-model no-progress guard stops a fourth identical read after a failed Gate',async()=>{
+  const e=await fixture()
+  const bad=check('video',{passed:false,status:'fail',failures:['MANIFEST_PATH_REQUIRED: segments[1].audio: expected a non-empty local file path'],diagnostic:{code:'MANIFEST_PATH_REQUIRED',path:'segments[1].audio',hint:'Set the segment audio field.'}})
+  await e.submit('s',{stageId:'qa',evidence:ev,runtimeChecks:[bad]})
+  const args={file_path:'/workspace/production.json'}
+  for(let i=1;i<=3;i++) await e.observeTool('s',{name:'read',callId:'same-'+i,isError:false,receipt:{callId:'same-'+i,tool:'read',argumentHash:argumentFingerprint(args),commandHash:null,outcome:'unknown',exitCode:null}})
+  const denied=e.policyDecision('s','read','playbook',args)
+  assert.match(denied,/NO_PROGRESS_REPEAT/);assert.match(denied,/segments\[1\]\.audio/)
+  assert.equal(e.policyDecision('s','read','playbook',{file_path:'/workspace/other.json'}),undefined)
+  await e.observeTool('s',{name:'write',callId:'fix',isError:false,receipt:{callId:'fix',tool:'write',argumentHash:argumentFingerprint({file_path:'/workspace/production.json',content:'changed'}),commandHash:null,outcome:'unknown',exitCode:null}})
+  assert.equal(e.policyDecision('s','read','playbook',args),undefined)
+})
+
+test('manifest-schema recovery tells a small model to fix the named field instead of reverse-engineering plugin source',()=>{
+  const plan=recoveryFor('qa',['video: MANIFEST_SEGMENT_DURATION: segments[4].start/end: segment s5 span mismatch'],book)
+  assert.equal(plan.code,'manifest-schema');assert.equal(plan.target,'qa')
+  assert.match(plan.instruction,/exact MANIFEST_\* field path/);assert.match(plan.instruction,/do not repeatedly reread/i)
 })

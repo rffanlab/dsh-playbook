@@ -6,6 +6,7 @@ plugin's narrated-video policy, NOT platform rules or speech recognition.
 """
 import array
 import base64
+import copy
 import hashlib
 import json
 import math
@@ -28,7 +29,48 @@ POLICY = {'noiseDb': -40, 'windowSeconds': 0.1, 'minLowSeconds': 0.3,
 
 
 class Invalid(Exception):
-    pass
+    def __init__(self, message, code=None, path=None, hint=None):
+        super().__init__(message)
+        self.code = code
+        self.path = path
+        self.hint = hint
+
+
+def manifest_error(code, path, message, hint):
+    raise Invalid('%s: %s: %s' % (code, path, message), code=code, path=path, hint=hint)
+
+
+def require_manifest_path(value, path, hint):
+    if not isinstance(value, str) or not value.strip() or len(value) > 4096 or '\x00' in value:
+        manifest_error('MANIFEST_PATH_REQUIRED', path, 'expected a non-empty local file path', hint)
+    return value
+
+
+def normalize_manifest_compat(manifest, kind):
+    """Accept a common small-model shape without weakening media checks.
+
+    Some agents naturally put per-segment audio/start/end in a top-level
+    segmentTiming map. The validator can consume that shape, while keeping the
+    canonical inline fields authoritative when both exist. This transforms only
+    the in-memory validation view; it never edits production.json.
+    """
+    normalized_manifest = copy.deepcopy(manifest)
+    copied = []
+    if kind != 'narration' and isinstance(normalized_manifest.get('segments'), list):
+        timing = normalized_manifest.get('segmentTiming')
+        if isinstance(timing, dict):
+            for index, segment in enumerate(normalized_manifest['segments']):
+                if not isinstance(segment, dict):
+                    continue
+                sid = segment.get('id')
+                row = timing.get(sid) if isinstance(sid, str) else None
+                if not isinstance(row, dict):
+                    continue
+                for field in ['audio', 'start', 'end']:
+                    if segment.get(field) is None and row.get(field) is not None:
+                        segment[field] = row[field]
+                        copied.append('segments[%d].%s<-segmentTiming.%s.%s' % (index, field, sid, field))
+    return normalized_manifest, copied
 
 
 class Unavailable(Exception):
@@ -462,6 +504,11 @@ def validate(request, root=None):
         manifest_path, manifest_text = reader.manifest(request['manifest'])
         manifest = json.loads(manifest_text)
         require(manifest.get('schemaVersion') == 1, 'Manifest requires schemaVersion=1')
+        manifest, copied_compat = normalize_manifest_compat(manifest, kind)
+        if copied_compat:
+            result['manifestNormalization'] = {'applied': True, 'source': 'segmentTiming',
+                                               'copiedFieldCount': len(copied_compat), 'copiedFields': copied_compat[:60]}
+            result['warnings'].append('MANIFEST_COMPAT_SEGMENT_TIMING: accepted top-level segmentTiming as aliases for missing segments[].audio/start/end; inline fields remain canonical.')
         base = manifest_path.parent
         result['manifestPath'] = str(manifest_path)
         result['manifestSignature'] = manifest_signature(manifest)
@@ -469,7 +516,9 @@ def validate(request, root=None):
             cached = cached_handoff(reader, manifest_path, manifest, request.get('previousQa'), result)
             if cached is not None:
                 return cached
-        script_path, script = reader.text(manifest.get('script'), base)
+        script_name = require_manifest_path(manifest.get('script'), 'script',
+            'Set production.json script to the canonical spoken-text file, e.g. brief/script.txt.')
+        script_path, script = reader.text(script_name, base)
         segments = manifest.get('segments')
         require(isinstance(segments, list) and 1 <= len(segments) <= 120, 'Need 1..120 narration segments')
         ids, texts = [], []
@@ -490,14 +539,19 @@ def validate(request, root=None):
         if kind != 'narration':
             chosen = segments[:1] if kind == 'pilot' else segments
             checked = []
-            for segment in chosen:
-                a = media(reader, segment.get('audio'), base, video=False)
-                result['failures'].extend(audio_failures(a, 'segment ' + segment['id']))
+            for index, segment in enumerate(chosen):
+                sid = segment['id']
+                audio_name = require_manifest_path(segment.get('audio'), 'segments[%d].audio' % index,
+                    "Put this segment's actual source audio on the segment itself, e.g. {\"id\":\"%s\",\"text\":\"...\",\"audio\":\"work/%s.wav\"}; top-level segmentTiming.%s.audio is also accepted as a compatibility alias." % (sid, sid, sid))
+                a = media(reader, audio_name, base, video=False)
+                result['failures'].extend(audio_failures(a, 'segment ' + sid))
                 require(not any(old['binding']['sha256'] == a['binding']['sha256'] and old['textSha256'] != text_hash(segment['text']) for old in checked), 'Duplicate audio bytes assigned to different narration segments; verify actual TTS outputs')
-                checked.append({'id': segment['id'], 'textSha256': text_hash(segment['text']), 'durationSeconds': a['durationSeconds'], 'binding': a['binding'],
+                checked.append({'id': sid, 'textSha256': text_hash(segment['text']), 'durationSeconds': a['durationSeconds'], 'binding': a['binding'],
                                 'allZero': a['audio']['allZero']})
             result['segmentAudio'] = checked
-            path = manifest.get('pilotVideo') if kind == 'pilot' else manifest.get('video')
+            video_field = 'pilotVideo' if kind == 'pilot' else 'video'
+            path = require_manifest_path(manifest.get(video_field), video_field,
+                'Set production.json %s to the actual current-run media file; do not search another final.mp4.' % video_field)
             result['video'] = media(reader, path, base, video=True)
             result['failures'].extend(audio_failures(result['video'], kind))
             duration = result['video']['durationSeconds']
@@ -505,26 +559,49 @@ def validate(request, root=None):
                 require(abs(duration - checked[0]['durationSeconds']) <= 1.5, 'Pilot must use the first complete natural segment, not padding/summary')
             else:
                 last = 0.0
-                for segment, audio in zip(segments, checked):
+                for index, (segment, audio) in enumerate(zip(segments, checked)):
                     start, end = segment.get('start'), segment.get('end')
-                    require(all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in [start, end]), 'Each segment needs numeric start/end in final video')
-                    require(last <= start < end <= duration + 0.15, 'Narration timeline is out of order/overlaps/out of range')
-                    require(abs(end - start - audio['durationSeconds']) <= 0.75, 'Narration timeline does not match measured audio; do not pad every segment with long holds')
-                    require(start - last <= POLICY['maxLowSeconds'], 'Unexplained gap between narration segments')
+                    if not all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in [start, end]):
+                        manifest_error('MANIFEST_SEGMENT_TIMING', 'segments[%d].start/end' % index,
+                            'segment %s needs numeric start/end in the final video' % segment['id'],
+                            'Measure the real narration placement and set start/end on this segment (or segmentTiming.%s as a compatibility alias); do not reread unchanged production.json.' % segment['id'])
+                    if not (last <= start < end <= duration + 0.15):
+                        manifest_error('MANIFEST_SEGMENT_TIMING', 'segments[%d].start/end' % index,
+                            'segment %s range %.3f..%.3f is out of order/overlapping/outside video %.3fs' % (segment['id'], start, end, duration),
+                            "Correct only this segment's measured placement, then resubmit QA.")
+                    delta = abs((end - start) - audio['durationSeconds'])
+                    if delta > POLICY['avToleranceSeconds']:
+                        manifest_error('MANIFEST_SEGMENT_DURATION', 'segments[%d].start/end' % index,
+                            'segment %s timeline span=%.3fs but measured source audio=%.3fs (delta=%.3fs > %.3fs)' % (segment['id'], end-start, audio['durationSeconds'], delta, POLICY['avToleranceSeconds']),
+                            "Make this segment's start/end match the measured audio actually used by the final narration. Fix the timing metadata or source audio; do not inspect plugin source and do not repeatedly reread the same manifest.")
+                    if start - last > POLICY['maxLowSeconds']:
+                        manifest_error('MANIFEST_SEGMENT_GAP', 'segments[%d].start' % index,
+                            '%.3fs unexplained gap before segment %s exceeds %.3fs' % (start-last, segment['id'], POLICY['maxLowSeconds']),
+                            'Use the measured narration boundary or explicitly account for the gap; fix only the affected timing.')
                     last = end
                 require(duration - last <= POLICY['maxLowSeconds'], 'Long unexplained tail after narration')
-                require(abs(float(manifest['durationSeconds']) - duration) <= 0.15, 'Declared duration is stale; use measured final duration')
-                require(manifest.get('coverForVideoSha256') == result['video']['binding']['sha256'], 'Cover binding is missing/stale; update against the measured video hash')
-                cover = reader.path(manifest.get('cover'), base)
+                try:
+                    declared_duration = float(manifest.get('durationSeconds'))
+                except (TypeError, ValueError):
+                    manifest_error('MANIFEST_DURATION_REQUIRED', 'durationSeconds', 'expected the measured final video duration', 'Set durationSeconds to the ffprobe/validator measured final duration.')
+                if abs(declared_duration - duration) > 0.15:
+                    manifest_error('MANIFEST_DURATION_STALE', 'durationSeconds', 'declared %.3fs != measured %.3fs' % (declared_duration, duration), 'Replace only durationSeconds with the measured final duration; do not rerender just to change metadata.')
+                if manifest.get('coverForVideoSha256') != result['video']['binding']['sha256']:
+                    manifest_error('MANIFEST_COVER_BINDING_STALE', 'coverForVideoSha256', 'cover binding does not equal the measured final video SHA256', 'Set coverForVideoSha256 to the current validated video hash after the final video bytes are stable.')
+                cover_name = require_manifest_path(manifest.get('cover'), 'cover', 'Set cover to the current-run PNG/JPEG/WebP cover file.')
+                cover = reader.path(cover_name, base)
                 require(cover.suffix.lower() in ['.png', '.jpg', '.jpeg', '.webp'], 'Cover must be PNG/JPEG/WebP')
                 result['cover'] = reader.fingerprint(cover)
                 # A real image decode, not filename-only validation. Does not read its text.
                 run(['ffmpeg', '-nostdin', '-v', 'error', '-xerror', '-protocol_whitelist', 'file,pipe',
                      '-format_whitelist', 'image2,png_pipe,jpeg_pipe,webp_pipe', '-i', str(cover), '-frames:v', '1', '-f', 'null', '-'], timeout=15)
-                _, title = reader.text(manifest.get('title'), base)
+                title_name = require_manifest_path(manifest.get('title'), 'title', 'Set title to the current-run Markdown/text title file.')
+                _, title = reader.text(title_name, base)
                 require(bool(title.strip()), 'Title is empty')
                 spec = manifest.get('subtitles')
                 subtitle_path = spec.get('path') if isinstance(spec, dict) else spec
+                subtitle_path = require_manifest_path(subtitle_path, 'subtitles.path' if isinstance(spec, dict) else 'subtitles',
+                    'Set subtitles to the narration SRT/ASS file that covers the canonical script.')
                 fmt = spec.get('format') if isinstance(spec, dict) else None
                 styles = spec.get('narrationStyles') if isinstance(spec, dict) else None
                 _, subs = reader.text(subtitle_path, base)
@@ -542,7 +619,12 @@ def validate(request, root=None):
     except (Unavailable, FileNotFoundError, PermissionError) as exc:
         result['status'] = 'unavailable'
         result['failures'].append(str(exc))
-    except (Invalid, KeyError, ValueError, TypeError, OSError, OverflowError) as exc:
+    except Invalid as exc:
+        result['failures'].append(str(exc))
+        if exc.code:
+            result['diagnostic'] = {'code': exc.code, 'path': exc.path, 'hint': exc.hint,
+                                    'doNotRepeatUnchangedRead': True}
+    except (KeyError, ValueError, TypeError, OSError, OverflowError) as exc:
         result['failures'].append(str(exc))
     return result
 

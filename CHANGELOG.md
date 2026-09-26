@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.4
+
+- Make media validator failures actionable for small models: exact manifest field paths, stable error codes, measured values and minimal repair hints instead of generic path errors.
+- Accept the common top-level `segmentTiming[id].{audio,start,end}` shape as a validation-only compatibility alias while keeping inline segment fields canonical.
+- Preserve structured validator diagnostics in compact tool output and make manifest recovery tell the Agent exactly what to change without reading plugin source.
+- Track deterministic tool argument fingerprints and stop a fourth identical read/grep/glob after a failed Gate with a `NO_PROGRESS_REPEAT` explanation; different diagnostics or state-changing fixes remain available.
+- Make high-call-count activity notices stage-aware instead of telling every stage to finish a pilot.
+- Add regressions derived from a real 27B stall where the same `production.json` was read 170 times before a larger model reverse-engineered the validator.
+
 ## 0.9.3
 
 - Make Playbook opt-in by applicability: no clear SOP means normal Harness execution, not mandatory task-intake.

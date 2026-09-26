@@ -77,6 +77,38 @@ class MediaTests(unittest.TestCase):
         self.assertTrue(result['subtitles']['scriptCoverage']);self.assertFalse(result['semanticVerification'])
         self.assertIn(str(self.root/'final.mp4'),result['bindings'])
 
+
+    def test_segment_timing_compat_alias_is_accepted_without_rewriting_source(self):
+        def change(m):
+            timing = {}
+            for segment in m['segments']:
+                timing[segment['id']] = {k: segment[k] for k in ['audio','start','end']}
+                for key in ['audio','start','end']:
+                    segment.pop(key)
+            m['segmentTiming'] = timing
+        result = self.check('video', change)
+        self.assertTrue(result['passed'], result)
+        self.assertTrue(result['manifestNormalization']['applied'])
+        self.assertEqual(result['manifestNormalization']['source'], 'segmentTiming')
+        self.assertEqual(result['manifestNormalization']['copiedFieldCount'], 6)
+
+    def test_missing_segment_audio_names_exact_manifest_field(self):
+        result = self.check('video', lambda m: m['segments'][1].pop('audio'))
+        self.assertFalse(result['passed'])
+        self.assertEqual(result['diagnostic']['code'], 'MANIFEST_PATH_REQUIRED')
+        self.assertEqual(result['diagnostic']['path'], 'segments[1].audio')
+        self.assertIn('segmentTiming', result['diagnostic']['hint'])
+        self.assertNotEqual(result['failures'][0], 'A non-empty local path is required')
+
+    def test_segment_duration_error_reports_id_numbers_and_smallest_fix(self):
+        result = self.check('video', lambda m: m['segments'][1].update(end=3.2))
+        self.assertFalse(result['passed'])
+        self.assertEqual(result['diagnostic']['code'], 'MANIFEST_SEGMENT_DURATION')
+        self.assertEqual(result['diagnostic']['path'], 'segments[1].start/end')
+        self.assertIn('S02', result['failures'][0])
+        self.assertIn('measured source audio', result['failures'][0])
+        self.assertTrue(result['diagnostic']['doNotRepeatUnchangedRead'])
+
     def test_audio_stream_present_but_all_zero_is_rejected(self):
         result=self.check('video',lambda m:m.update(video='silent.mp4',coverForVideoSha256=hashlib.sha256((self.root/'silent.mp4').read_bytes()).hexdigest()))
         self.assertFalse(result['passed']);self.assertTrue(result['video']['audio']['allZero'])

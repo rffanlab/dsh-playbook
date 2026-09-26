@@ -6,6 +6,12 @@
 
 A general DeepSeek Harness SOP plugin: a method catalog, project library, stage evidence, controlled repair and audit reports. Video production is one domain, not the engine's default task.
 
+## 0.9.4: diagnostics a small model can act on
+
+A real 27B run stalled after media QA returned only `A non-empty local path is required`, then read the same `production.json` 170 times. Validator failures now carry stable `MANIFEST_*` codes, exact JSON paths, measured values and minimal repair hints. The common `segmentTiming` shape is accepted as a compatibility alias, and a fourth identical read/grep/glob after a failed Gate is blocked with a no-progress explanation.
+
+The goal is to expose the contract directly instead of requiring a larger model to reverse-engineer plugin source. See [small-model recovery](docs/SMALL-MODEL-RECOVERY.en.md).
+
 ## 0.9.3: no matching SOP means normal execution
 
 Playbook now takes control **only when a method clearly applies**. Straightforward maintenance such as uninstalling a plugin proceeds under the user request and normal Harness permissions when no dedicated SOP exists. Partial words such as “plugin” or “model” are hints, not a reason to force development/deployment, and task-intake is opt-in rather than a mandatory fallback.
@@ -48,7 +54,7 @@ dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 
 Restart and refresh the browser, then give a task directly. Simple clear tasks can auto-select; referenced sources/project methods require read-first intake. No routine hand-written JSON, manual method choice or start command is required.
 
-For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.9.3` identifies this runtime; pinned method versions may remain older.
+For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.9.4` identifies this runtime; pinned method versions may remain older.
 
 ## Engine and domain contracts
 
