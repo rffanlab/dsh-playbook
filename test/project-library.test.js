@@ -22,17 +22,19 @@ async function intake(f, project='taoist-culture', task='制作道家文化视�
   if(sources.length)read(f)
   return f.p.intake(f.exec,{project_id:project,requirements:['保留原文；先核验出处，再制作自然口播。'],source_call_ids:sources})
 }
-const spec = {sop_id:'culture-method',base_id:'taoist-culture-video',rules:['保留用户已确认的原文。'],stage_notes:{'source-truth':['记录所用版本和引用段落，不把现代应用说成古籍原义。']}}
+const spec = {sop_id:'culture-method',base_id:'taoist-culture-video',rules:['保留用户已确认的原文。'],stage_notes:{preflight:['记录所用版本和引用段落，不把现代应用说成古籍原义。']}}
 
 test('video publishing platform does not replace the content project hint',()=>{
   assert.equal(projectHint('制作道家文化视频发布到B站'),'taoist-culture-video')
   assert.equal(projectHint('帮我做一期 B站本地模型实测视频'),'bilibili-video-production')
   assert.equal(isVideoTask('写一篇公众号介绍道家视频制作'),false)
 })
-test('culture and experiment bases share media validators, not the same domain stage graph',()=>{
+test('culture and experiment bases share the short media graph but keep different domain guidance',()=>{
   const f=fixture(),a=f.e.getPlaybook('taoist-culture-video'),b=f.e.getPlaybook('bilibili-video-production')
-  assert.ok(a.stages.some(s=>s.id==='source-truth'));assert.ok(a.stages.some(s=>s.id==='interpretation'))
-  assert.ok(b.stages.some(s=>s.id==='evidence'));assert.ok(!b.stages.some(s=>s.id==='source-truth'))
+  assert.deepEqual(a.stages.filter(s=>s.id!=='diagnose').map(s=>s.id),['preflight','pilot','produce','qa'])
+  assert.deepEqual(b.stages.filter(s=>s.id!=='diagnose').map(s=>s.id),['preflight','pilot','produce','qa'])
+  assert.match(a.stages.find(s=>s.id==='preflight').instructions.join(' '),/primary text|原文|interpretation/i)
+  assert.match(b.stages.find(s=>s.id==='preflight').instructions.join(' '),/experiment|tutorial|evidence/i)
   assert.deepEqual(a.stages.find(s=>s.id==='qa').gate.validators,b.stages.find(s=>s.id==='qa').gate.validators)
 })
 test('pre-step no longer auto-starts a video before reading and identifying the project',async()=>{
@@ -85,6 +87,23 @@ test('same workspace keeps culture and experiment projects separate; different w
   const alien={...second,agent:{id:'s',session:{header:{cwd:'/workspace/other'}}}}
   assert.deepEqual(f.p.list(alien),[])
 })
+test('accepted preflight capability hints are reused by the next task in the same project without storing credentials',async()=>{
+  const f=fixture();await intake(f)
+  const out=await f.t.execute({action:'route',playbook_id:'taoist-culture-video',note:'This task explicitly produces a Taoist culture video.'},f.exec)
+  assert.equal(out.status.run.stageId,'preflight')
+  const stage=f.e.currentStage('s')
+  const evidence={task_contract:'Concrete episode contract',source_truth:'Primary text and interpretation boundary verified',capability_evidence:['owner voice probe passed','image provider probe passed'],reusable_capabilities:['ownerVoice=LuyuSelfVoice','api_key=DO_NOT_CACHE','image=minimax-image'],selected_pipeline:'E5 owner voice + MiniMax image + ffmpeg',limits:'No credential values stored',production_manifest:'production.json'}
+  const check={kind:'narration',validatorVersion:'0.4.0',passed:true,status:'pass',failures:[],bindings:{x:{sha256:'a',bytes:1}},narration:{scriptSha256:'a',segmentSha256:'b'}}
+  await f.e.submit('s',{stageId:stage.id,evidence,runtimeChecks:[check]})
+  assert.equal(f.e.sopLibrary.capabilityCache[JSON.stringify(['/workspace/shared','taoist-culture'])].selectedPipeline,evidence.selected_pipeline)
+  await f.e.cancel('s');f.r.clear('s')
+  const next=await intake(f,'taoist-culture','制作下一期道家文化视频')
+  assert.equal(next.capabilityCache.selectedPipeline,evidence.selected_pipeline)
+  const routed=await f.t.execute({action:'route',playbook_id:'taoist-culture-video',note:'Same project, new video episode.'},f.exec)
+  assert.equal(routed.status.input.project.capabilities.reusableCapabilities[0],'ownerVoice=LuyuSelfVoice')
+  assert.ok(!routed.status.input.project.capabilities.reusableCapabilities.some(value=>value.includes('DO_NOT_CACHE')))
+})
+
 test('method reuse ignores changed episode task/source files and does not create duplicate versions',async()=>{
   const f=fixture();await intake(f);const first=await f.p.save(f.exec,spec)
   f.r.clear('s');await intake(f,'taoist-culture','制作道家文化视频，主题换成下一章')
@@ -145,7 +164,7 @@ test('failed disk persistence rolls library mutation back; aborted save creates 
 test('validation is read-only; invalid graph or unknown stages cannot be saved',async()=>{
   const f=fixture();await intake(f);const before=f.e.snapshot();f.p.validate(f.exec,spec);assert.deepEqual(f.e.snapshot(),before)
   assert.throws(()=>f.p.validate(f.exec,{...spec,stage_notes:{imaginary:['do it']}}),/Unknown stage/)
-  const d=structuredClone(f.e.getPlaybook(spec.base_id));d.stages.find(s=>s.id==='handoff').next='brief'
+  const d=structuredClone(f.e.getPlaybook(spec.base_id));d.stages.find(s=>s.id==='qa').next='preflight'
   assert.throws(()=>f.p.validate(f.exec,{...spec,definition:d}),/terminal/)
 })
 test('changing approved library does not alter a run snapshot or permit re-intake mid-run',async()=>{

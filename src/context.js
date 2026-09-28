@@ -7,6 +7,7 @@ export function stageContext(status, budget = 6000) {
   if (status.isolation) rows.push(`RUN OUTPUTS ONLY: ${status.isolation.realRoot ?? status.isolation.root}; prepared=${status.isolation.prepared}. Shared project/SOP identity is NOT output ownership. Use playbook workspace before work.`)
   if (status.input?.project) rows.push(`PINNED PROJECT CONTRACT (follow within Host permissions; do not mutate to pass a gate): ${clip({project:status.input.project, sop:status.input.sop, contract:status.input.contract}, 2200)}`)
   if (status.activity?.notice) rows.push(status.activity.notice)
+  if (status.activity?.softToolBudget) rows.push(`Stage efficiency target: <=${status.activity.softToolBudget} observed tool results unless concrete defects require more. Batch independent work; this is a soft target, not a quality waiver.`)
   if (status.recovery) rows.push(`NEXT REPAIR: ${JSON.stringify(status.recovery)}`)
   rows.push(status.instruction ?? '')
   if (status.run.state === 'awaiting_review') rows.push('Awaiting user review, not accepted. Direct chat “拒绝候选” or “打回当前候选” rejects this candidate; UI is optional, /playbook revise is a human command fallback. Do not invent a chat-card button or ask for cancel/clear/new run. Deliver the candidate and system report; do not self-award a grade or modify media silently.')

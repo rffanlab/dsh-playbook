@@ -6,6 +6,7 @@ import { normalizePlaybook } from './core.js'
 const clone = value => structuredClone(value)
 const idPattern = /^[a-z][a-z0-9_-]{0,47}$/
 const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex')
+const capabilityKey = (workspace, projectId) => JSON.stringify([workspace, projectId])
 import { analyzeTask, selectionMismatch, recommendationFits } from './task-scope.js'
 import { VIDEO_BASES, isVideoTask, mentionsSource } from './intake-policy.js'
 export { VIDEO_BASES, INTAKE_READ_TOOLS, isVideoTask, mentionsSource, projectHint } from './intake-policy.js'
@@ -165,6 +166,7 @@ export class ProjectLibrary {
     this.prepared.set(scope.sessionId, prepared)
     return { ok: true, project: { id: scope.projectId, workspace: scope.workspace }, contractDigest: prepared.contractDigest,
       suggestedBase: hint, taskScope, requirements, sources: prepared.sources, projectSops: this.list(exec),
+      capabilityCache: clone(this.engine.sopLibrary.capabilityCache?.[capabilityKey(scope.workspace, scope.projectId)] ?? null),
       next: 'Choose by this task deliverable, not project name or media words in API examples. Reuse a compatible project SOP when one clearly applies. If none applies, do the task normally without Playbook; task-intake is only for explicit planning/intake needs. No project rename, SOP rewrite or user unlock is needed.' }
   }
   taskScope(prepared, raw = '') {
@@ -301,7 +303,7 @@ export class ProjectLibrary {
     const baseId = record?.baseId ?? definition.id
     const taskScope = this.taskScope(prepared)
     this.assertApplicable(taskScope, baseId, definition)
-    return { definition, input: { task: prepared.task, project: { id: scope.projectId, workspace: scope.workspace },
+    return { definition, input: { task: prepared.task, project: { id: scope.projectId, workspace: scope.workspace, capabilities: clone(this.engine.sopLibrary.capabilityCache?.[capabilityKey(scope.workspace, scope.projectId)] ?? null) },
       contract: { digest: prepared.contractDigest, requirements: prepared.requirements, sources: prepared.sources, taskScope, clarifications:prepared.clarifications ?? [] },
       sop: record ? { id: record.logicalId, revision: record.revision, status: record.status, baseId: record.baseId, rules: record.rules } : { id: definition.id, status: 'builtin', version: definition.version } } }
   }

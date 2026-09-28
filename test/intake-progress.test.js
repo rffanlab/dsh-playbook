@@ -149,7 +149,7 @@ test('full wiring: pasted video request + voice constraints → intake → first
  assert.equal(intake.taskScope.kind,'video-production')
  const route=await h.call({action:'route',playbook_id:'taoist-culture-video',note:'A real full video with voice constraints.'})
  assert.equal(route.started,true);assert.equal(route.status.run.playbookId,'taoist-culture-video')
- assert.equal(route.status.run.stageId,'brief')
+ assert.equal(route.status.run.stageId,'preflight')
 })
 test('full wiring: native question result updates intake before the next model tool call',async t=>{
  const h=await wired(t,'只制作口播音频')
@@ -158,7 +158,7 @@ test('full wiring: native question result updates intake before the next model t
  for(const handler of h.handlers.get('tools/pre-execute')??[])await handler(ask,async()=>({kind:'allow'}))
  for(const handler of h.handlers.get('tools/result')??[])handler(ask,answer('做成完整的成片，跟以前一样。'))
  const out=await h.call({action:'route',playbook_id:'short-video-production',note:'The actual user answered that they need the full video.'})
- assert.equal(out.started,true);assert.equal(out.status.run.stageId,'brief')
+ assert.equal(out.started,true);assert.equal(out.status.run.stageId,'preflight')
 })
 test('full wiring: repeated wrong route returns terminal diagnosis instead of 60+ attempts',async t=>{
  const h=await wired(t,'制作完整视频成片');await h.call({action:'intake',project_id:'video-project',requirements:['交付完整视频']})

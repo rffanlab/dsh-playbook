@@ -6,6 +6,12 @@
 
 A general DeepSeek Harness SOP plugin: a method catalog, project library, stage evidence, controlled repair and audit reports. Video production is one domain, not the engine's default task.
 
+## 0.10.0: four normal stages for recurring video work
+
+Produced-video workflows now use **preflight → pilot → produce → qa**, with diagnose only after user rejection. Brief/source/evidence boundaries, capability selection and exact narration are handled in one preflight; content review is part of terminal QA; successful QA creates the candidate and fixed delivery without an extra handoff reasoning round.
+
+Accepted preflight records a project-scoped non-secret capability hint for future minimal health probes. QA performs cheap collect-all manifest lint first, recommends one contact sheet for batch visual review, and bounds ASR to one full pass plus one targeted retry. The optimization removes model turns, not independent media checks. See [video efficiency](docs/VIDEO-EFFICIENCY.en.md).
+
 ## 0.9.4: diagnostics a small model can act on
 
 A real 27B run stalled after media QA returned only `A non-empty local path is required`, then read the same `production.json` 170 times. Validator failures now carry stable `MANIFEST_*` codes, exact JSON paths, measured values and minimal repair hints. The common `segmentTiming` shape is accepted as a compatibility alias, and a fourth identical read/grep/glob after a failed Gate is blocked with a no-progress explanation.
@@ -42,7 +48,7 @@ Integrating media tools into all Sessions is an engineering/configuration task, 
 | Review an existing video | Review, not production from scratch |
 | Produce a complete video | Applicable production SOP and real media checks |
 
-Uncertain cases remain for the current Agent to interpret; ask only materially missing task facts. Generic intake is explicitly labeled when no specialized method fits. Rules are not an accuracy-benchmarked semantic classifier, and mixed requests do not imply automatic parallel multi-SOP orchestration.
+Uncertain cases remain for the current Agent to interpret; ask only materially missing task facts. When no specialized method fits, Playbook passes through to normal Harness execution. Rules are not an accuracy-benchmarked semantic classifier, and mixed requests do not imply automatic parallel multi-SOP orchestration.
 
 ## Update and use
 
@@ -54,7 +60,7 @@ dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 
 Restart and refresh the browser, then give a task directly. Simple clear tasks can auto-select; referenced sources/project methods require read-first intake. No routine hand-written JSON, manual method choice or start command is required.
 
-For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.9.4` identifies this runtime; pinned method versions may remain older.
+For an integration conversation stuck at intake without a Run, continue the same task without a project rename, state clearing or method recreation. `runtimePluginVersion=0.10.0` identifies this runtime; pinned method versions may remain older.
 
 ## Engine and domain contracts
 

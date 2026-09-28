@@ -105,7 +105,7 @@ test('compact status avoids replaying full task/history; detail=full remains ava
 })
 test('large pilot activity produces an advisory, not an automatic stop or more approvals',async()=>{
   const e=await fixture('pilot');e.runs.get('s').observations.bash={calls:100,successes:100,failures:0}
-  const s=e.status('s');assert.match(s.activity.notice,/ONE complete natural segment/);assert.equal(s.active,true)
+  const s=e.status('s');assert.match(s.activity.notice,/EFFICIENCY_BUDGET/);assert.equal(s.activity.softToolBudget,10);assert.equal(s.active,true)
 })
 test('candidate diagnosis runs a fixed read-only command through Host policies and cannot revise or accept',async()=>{
   const e=await fixture();await advance(e,null);let d,request

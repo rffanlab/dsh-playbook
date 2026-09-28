@@ -6,6 +6,12 @@
 
 DeepSeek Harness 的通用 SOP 插件：方法目录、项目方法库、阶段证据、受控返修与执行报告。视频制作只是其中一种业务，不是引擎默认任务。
 
+## 0.10.0：把小模型的视频流程砍到四个正常阶段
+
+成熟视频任务不再让 Agent 在 brief/source-truth/interpretation/capabilities/script/content-review/handoff 之间反复重新规划。新链路是 **preflight → pilot → produce → qa**；用户退回才进入 diagnose。原文/证据边界、能力核实和完整口播在 preflight 一次完成，内容审查并入 QA，QA 通过后自动创建候选并交付固定副本。
+
+项目会保存上一期 accepted preflight 的非敏感能力提示（选中的声音/生图/渲染管线与限制），下一期只需最小健康检查；QA 先一次性收集清单结构错误，视觉审查默认一张 contact sheet，ASR 默认全片一次＋问题段一次。目标是减少 LLM 回合，不减少媒体真实性检查。详见 [小模型高效视频流程](docs/VIDEO-EFFICIENCY.md)。
+
 ## 0.9.4：让小模型看到“该改哪里”，而不是猜验证器
 
 针对 27B 在媒体 QA 中反复读取同一个 `production.json` 却无法理解 `A non-empty local path is required` 的真实卡死，验证器现在返回明确的 `MANIFEST_*` 错误码、JSON 字段路径、实测值和最小修复提示；常见的 `segmentTiming` 结构可直接兼容。失败 Gate 后连续三次完全相同的 read/grep/glob 会触发无进展保护，第四次不再继续空转。
@@ -42,7 +48,7 @@ Playbook 现在是“**匹配到合适方法才接管**”，不是所有任务�
 | 审核已有成片 | 视频审核，不要求从头制作 |
 | 制作一条完整视频 | 相应生产 SOP 与真实媒体检查 |
 
-规则不确定时由当前 Agent 判断，缺关键任务条件才追问；没有适用专用流程时使用明确标注的通用接单。规则不是经过准确率验证的语义分类器，复合任务也不等于已实现多 SOP 自动并行编排。
+规则不确定时由当前 Agent 判断，缺关键任务条件才追问；没有适用专用流程时 Playbook 直接放行 Harness 正常执行。规则不是经过准确率验证的语义分类器，复合任务也不等于已实现多 SOP 自动并行编排。
 
 ## 更新与使用
 
@@ -54,7 +60,7 @@ dsh plugin --profile web add github:rffanlab/dsh-playbook#main --force
 
 重启原服务并刷新网页，直接给任务。简单且明确的任务可自动选择；引用资料或需要项目方法时先读取、intake，再启动。不要求每次先写 JSON、手工选 SOP 或输入开始命令。
 
-本次卡在 intake、没有启动 Run 的工具接入会话，可以继续原任务，不用改项目名、清状态或重建方法。实际运行版本看 `runtimePluginVersion=0.9.4`；已固定的方法快照可能仍显示旧版，不能据此判断补丁未加载。
+本次卡在 intake、没有启动 Run 的工具接入会话，可以继续原任务，不用改项目名、清状态或重建方法。实际运行版本看 `runtimePluginVersion=0.10.0`；已固定的方法快照可能仍显示旧版，不能据此判断补丁未加载。
 
 ## 引擎和业务规则分开
 

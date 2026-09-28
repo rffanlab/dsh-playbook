@@ -32,7 +32,7 @@ export class PlaybookEngine {
     this.runs = new Map()
     this.archives = new Map()
     this.queue = Promise.resolve()
-    this.sopLibrary = { projects: {}, bindings: {} }
+    this.sopLibrary = { projects: {}, bindings: {}, capabilityCache: {} }
   }
 
   serialize(task) {
@@ -77,6 +77,7 @@ export class PlaybookEngine {
   hydrate(snapshot) {
     if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return
     if (snapshot.sopLibrary?.projects && snapshot.sopLibrary?.bindings) this.sopLibrary = clone(snapshot.sopLibrary)
+    this.sopLibrary.capabilityCache ??= {}
     for (const [id, rows] of Object.entries(snapshot.archives ?? {})) if (Array.isArray(rows)) this.archives.set(id, clone(rows.slice(-20)))
     const rows = snapshot.runs && typeof snapshot.runs === 'object' ? snapshot.runs : {}
     for (const [sessionId, run] of Object.entries(rows)) {
@@ -283,7 +284,24 @@ export class PlaybookEngine {
         await this.save()
         return this.status(key)
       }
-      if (gate.passed) { run.evidence[stage.id] = clone(evidence); (run.machineEvidence ??= {})[stage.id] = clone(runtimeChecks ?? []) }
+      if (gate.passed) {
+        run.evidence[stage.id] = clone(evidence); (run.machineEvidence ??= {})[stage.id] = clone(runtimeChecks ?? [])
+        if (stage.id === 'preflight' && run.input?.project?.workspace && run.input?.project?.id) {
+          const secretLike = /(?:api[_-]?key|token|password|passwd|secret|cookie|authorization)\s*[:=]/i
+          const safeText = (value, max = 2000) => typeof value === 'string' && !secretLike.test(value) ? value.trim().slice(0, max) : ''
+          const cleanStrings = values => Array.isArray(values) ? values.map(v => safeText(v, 1000)).filter(Boolean).slice(0, 24) : []
+          const key = JSON.stringify([run.input.project.workspace, run.input.project.id])
+          this.sopLibrary.capabilityCache ??= {}
+          this.sopLibrary.capabilityCache[key] = {
+            selectedPipeline: safeText(evidence.selected_pipeline),
+            reusableCapabilities: cleanStrings(evidence.reusable_capabilities),
+            limits: safeText(evidence.limits),
+            verifiedAt: at,
+            source: 'accepted-preflight-evidence-not-credential-storage',
+          }
+          run.input.project.capabilities = clone(this.sopLibrary.capabilityCache[key])
+        }
+      }
       run.history.push({ type: gate.passed ? 'gate_passed' : 'gate_failed', at, stageId: stage.id, attempt: run.stageAttempt, failures: clone(gate.failures), note: String(note ?? '') })
 
       if (gate.passed) {

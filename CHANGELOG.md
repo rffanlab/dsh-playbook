@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.0
+
+- Collapse produced-video workflows from 8–10 normal stages to four: preflight, pilot, produce and terminal QA; revision diagnosis remains off the normal path.
+- Merge brief/source-truth/interpretation/capability discovery/script freezing into one preflight Gate while retaining independent narration validation and domain guidance.
+- Merge content review into terminal QA and remove the extra handoff model round; passed QA still creates an awaiting-review candidate and fixed-snapshot delivery.
+- Persist a project-scoped non-secret capability hint from accepted preflight evidence and surface it on future tasks so recurring voice/image/render services need only a minimal health probe.
+- Add cheap collect-all manifest lint before media decode, returning multiple missing structural fields in one validator result instead of one-failure-per-submit.
+- Add stage-specific soft tool-call budgets, batch/concurrency guidance, one contact-sheet visual review, and bounded ASR guidance for small-model efficiency.
+- Generalize the identical read/grep/glob no-progress guard to active stages, not only after a failed Gate.
+- Preserve actual media decoding, narration coverage, timing, subtitles, run ownership, production witness, hashes and user review semantics.
+
 ## 0.9.4
 
 - Make media validator failures actionable for small models: exact manifest field paths, stable error codes, measured values and minimal repair hints instead of generic path errors.

@@ -73,6 +73,66 @@ def normalize_manifest_compat(manifest, kind):
     return normalized_manifest, copied
 
 
+def manifest_static_diagnostics(manifest, kind):
+    """Collect cheap structural problems before decoding any media."""
+    problems = []
+    def add(code, path, message, hint):
+        problems.append({'code': code, 'path': path, 'message': message, 'hint': hint,
+                         'doNotRepeatUnchangedRead': True})
+    def path_value(value, path, hint):
+        if not isinstance(value, str) or not value.strip() or len(value) > 4096 or '\x00' in value:
+            add('MANIFEST_PATH_REQUIRED', path, 'expected a non-empty local file path', hint)
+            return False
+        return True
+    path_value(manifest.get('script'), 'script', 'Set script to the canonical spoken-text file.')
+    segments = manifest.get('segments')
+    if not isinstance(segments, list) or not (1 <= len(segments) <= 120):
+        add('MANIFEST_SEGMENTS_REQUIRED', 'segments', 'expected 1..120 narration segment objects', 'Create ordered segments with id/text; audio/start/end are required after preflight.')
+        return problems
+    seen = set()
+    for index, segment in enumerate(segments):
+        if not isinstance(segment, dict):
+            add('MANIFEST_SEGMENT_OBJECT', 'segments[%d]' % index, 'segment must be an object', 'Use {id,text,audio,start,end}.')
+            continue
+        sid, text = segment.get('id'), segment.get('text')
+        if not isinstance(sid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', sid):
+            add('MANIFEST_SEGMENT_ID', 'segments[%d].id' % index, 'invalid/missing segment id', 'Use a stable id such as s1 or scene_01.')
+        elif sid in seen:
+            add('MANIFEST_SEGMENT_ID', 'segments[%d].id' % index, 'duplicate segment id %s' % sid, 'Every narration segment id must be unique.')
+        else:
+            seen.add(sid)
+        if not isinstance(text, str) or len(text) > 32000 or not normalized(text):
+            add('MANIFEST_SEGMENT_TEXT', 'segments[%d].text' % index, 'missing/invalid exact spoken text', 'Put the exact spoken text for this segment here, not a scene summary.')
+        if kind != 'narration':
+            path_value(segment.get('audio'), 'segments[%d].audio' % index,
+                       'Set the actual source audio for this segment; segmentTiming.<id>.audio is accepted as an alias.')
+        if kind in ['video', 'handoff']:
+            start, end = segment.get('start'), segment.get('end')
+            if not all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in [start, end]):
+                add('MANIFEST_SEGMENT_TIMING', 'segments[%d].start/end' % index,
+                    'numeric start/end are required for final-video narration placement',
+                    'Use measured placement; segmentTiming.<id>.start/end is accepted as an alias.')
+    if kind != 'narration':
+        field = 'pilotVideo' if kind == 'pilot' else 'video'
+        path_value(manifest.get(field), field, 'Set %s to the actual current-run media file.' % field)
+    if kind in ['video', 'handoff']:
+        path_value(manifest.get('cover'), 'cover', 'Set cover to the current-run PNG/JPEG/WebP file.')
+        path_value(manifest.get('title'), 'title', 'Set title to the current-run title text/Markdown file.')
+        spec = manifest.get('subtitles')
+        sub = spec.get('path') if isinstance(spec, dict) else spec
+        path_value(sub, 'subtitles.path' if isinstance(spec, dict) else 'subtitles', 'Set the narration SRT/ASS file.')
+        try:
+            duration = float(manifest.get('durationSeconds'))
+            if not math.isfinite(duration) or duration <= 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            add('MANIFEST_DURATION_REQUIRED', 'durationSeconds', 'positive measured final duration is required', 'Set this from the actual final video duration.')
+        binding = manifest.get('coverForVideoSha256')
+        if not isinstance(binding, str) or not re.fullmatch(r'[a-f0-9]{64}', binding):
+            add('MANIFEST_COVER_BINDING_REQUIRED', 'coverForVideoSha256', 'current final-video SHA256 is required', 'Set it after final video bytes are stable.')
+    return problems
+
+
 class Unavailable(Exception):
     pass
 
@@ -512,6 +572,13 @@ def validate(request, root=None):
         base = manifest_path.parent
         result['manifestPath'] = str(manifest_path)
         result['manifestSignature'] = manifest_signature(manifest)
+        static_problems = manifest_static_diagnostics(manifest, kind)
+        if static_problems:
+            result['diagnostics'] = static_problems
+            result['diagnostic'] = static_problems[0]
+            result['failures'].extend('%s: %s: %s' % (p['code'], p['path'], p['message']) for p in static_problems)
+            result['bindings'] = reader.bindings
+            return result
         if kind == 'handoff':
             cached = cached_handoff(reader, manifest_path, manifest, request.get('previousQa'), result)
             if cached is not None:

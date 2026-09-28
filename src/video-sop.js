@@ -1,5 +1,5 @@
 import { domainStages } from './domain-sops.js'
-/** The two video production SOPs share technical contracts, not audience assumptions. */
+/** Media production is intentionally short: one planning gate, one pilot, one build, one QA. */
 const text = key => ({ key, type: 'string', minLength: 1 })
 const list = key => ({ key, type: 'array', minItems: 1 })
 function stage(id, title, instructions, evidence, kind, back) {
@@ -8,63 +8,62 @@ function stage(id, title, instructions, evidence, kind, back) {
       ...(kind ? { validators: [{ kind, pathKey: 'production_manifest' }] } : {}) },
     retry: { maxAttempts: 2, onExhausted: back ? `branch:${back}` : 'fail' } }
 }
+function domainGuidance(id) {
+  const rows = domainStages(id)
+  return rows.flatMap(row => [
+    `${row.title}: ${row.objective}`,
+    ...row.instructions,
+  ])
+}
 export function videoSop(original) {
   if (!['bilibili-video-production', 'short-video-production', 'taoist-culture-video'].includes(original.id)) return original
   const p = structuredClone(original)
+  p.version = '0.10.0'
   p.delivery = { review: true, revisionStage: 'diagnose',
-    repairStages: ['script', 'pilot', 'produce', 'qa', 'content-review'], maxSelfRepairs: 3 }
-  const brief = structuredClone(original.stages[0])
-  brief.instructions.push('Record required deliverables and factual claims. For experiments the result is UNKNOWN until measured: do not promise success or pre-write all-gates-passed, zero interventions or A-grade claims.')
-  brief.instructions.push('Use the frozen project/task contract in status.input. Do not silently revise a supplied script or production method. Platform and this episode topic are inputs, not workflow identity.')
-  p.stages = [brief,
-    ...domainStages(p.id),
-    stage('capabilities', '核实可用生产工具 / Verify actual production capabilities', [
-      'Inspect the public tool/schema/service/template inventory and perform a minimal safe probe. Absence of a CLI does not prove local ComfyUI/TTS services are unavailable.',
-      'Reuse working public pipelines before installing replacements. Do not read prohibited historical experiment answers. Record inaccessible capabilities, not invented installations.',
-    ], [list('capability_evidence'), text('selected_pipeline'), text('limits')]),
-    stage('script', '冻结完整口播与逐段输入 / Freeze full narration and exact segment inputs', [
-      'Use the full user-approved spoken script when provided; do not rewrite it merely because this is the script stage. Otherwise author within the task requirements. Save a UTF-8 spoken-only script and production.json schemaVersion=1, script path, segments[{id,text}].',
-      'Concatenated segment text must equal the FULL script (whitespace-only normalization). Never use scene summaries such as “我做了三件事...” as TTS input. Do not change the approved script later without repairing back here.',
-      'The production_manifest path is relative to the DSH session workspace or an absolute path inside it. All artifact paths in it resolve relative to this manifest. The plugin independently reads the files on submit.',
-      'For an experiment, source any measured result from playbook report and actual tools; claims about this unfinished delivery must remain unproven, not a prewritten victory.',
-    ], [text('script_summary'), list('claim_sources')], 'narration'),
-    stage('pilot', '先完成一个自然完整段样片 / Validate one complete pilot segment', [
-      'Use the first segment exact text as TTS input at natural speed. Record segments[0].audio and pilotVideo paths in production.json.',
-      'Render one complete natural segment with the real audio chain and layout. Do not batch the entire film until this pilot passes. Do not pad a short summary to reach a guessed duration.',
-      'Listen/view via available modalities. The plugin decodes the source audio and pilot video, checks nonzero PCM, gaps and duration. This is not speech recognition or an aesthetic verdict.',
-    ], [text('pipeline_command'), list('pilot_observations')], 'pilot', 'script'),
-    stage('produce', '按完整段落制作全片 / Produce from the verified script and pilot', [
-      'Generate all segments from their exact approved text, preserving id order. Canonical manifest shape: segments:[{\"id\":\"s1\",\"text\":\"...\",\"audio\":\"work/s1.wav\",\"start\":0.0,\"end\":3.2}]. Fill every segment audio,start,end from measured source audio/timeline; no arbitrary holds. A top-level segmentTiming[id]{audio,start,end} compatibility shape is accepted, so do not rewrite valid data only for schema style.',
-      'Render video, PNG/JPEG/WebP cover, title Markdown and timed SRT. Fill video,cover,title,subtitles,durationSeconds,coverForVideoSha256 in production.json.',
-      'Keep natural voice pace. Fix a missing TTS input at its source, not by changing speed or filling silence. Any script change needs action=repair target script.',
-      'Cover claims must match this final version. Technical metadata does not prove image text; inspect the actual cover. Use no platform-ranking claims without a source.',
-    ], [list('deliverables'), text('production_manifest')], null, 'pilot'),
-    stage('qa', '独立技术验收与哈希绑定 / Machine media QA and hash binding', [
-      'Submit production_manifest for independent read-only checks. release_ready=true and FFmpeg exit zero cannot substitute for media contents.',
-      'The worker validates canonical script/segment coverage, every source audio, full video/audio decode, all-zero audio, long low-level gaps, audio timeline, SRT bounds and full text coverage, cover decode and version metadata.',
-      'Defaults (-40dB RMS per 100ms window, max 3s low gap, max 50% low windows) are narrated-video test policy, not platform policy. Music can mask absent narration; speech meaning and aesthetics remain separate.',
-      'If checks fail, obey the validator diagnostic code/path/hint (especially MANIFEST_*). Fix the named field or dependency, then resubmit. Do not repeatedly reread an unchanged production.json or inspect dsh-playbook source to guess the validator contract. Use bounded action=repair only when an earlier stage really must change.',
-    ], [text('qa_scope')], 'video', 'produce'),
-    stage('content-review', '检查内容而非装饰 / Review actual explanation and speech', [
-      'Compare the actual speech and subtitles with the full approved script using available hearing/vision. A progress bar or changing timestamp is not meaningful explanation.',
-      'Check actual first/middle/final frames, title/cover text and whether all promised points are delivered. Record timestamped observations; arrays must be arrays, not {item:[...]}.',
-      'No available hearing/vision means semantic review remains UNVERIFIED; report it honestly. Do not invent an A grade or user acceptance. Machine QA does not certify spoken wording.',
-    ], [list('timestamped_observations'), text('semantic_review_status'), text('unverified_items')], null, 'produce'),
-    stage('handoff', '交付待验收候选 / Deliver a candidate, not user acceptance', [
-      'Do not modify any media after QA. Submit the same production_manifest; hashes are checked again against QA. Changed files require repair to qa.',
-      'After gate success, use playbook action=export_report to write a system report beside the validated video (or report format=markdown when export is unavailable); do not invent stage counts, timing, passes or human review counts.',
-      'Deliver actual absolute paths or workspace-relative links. State awaiting_review and any unverified semantics; only the user may accept. A user rejection reopens this same run and version chain.',
-    ], [list('deliverables'), text('limitations')], 'handoff', 'qa'),
-    stage('diagnose', '原交付被退回：定位最小返修点 / Diagnose rejection within the original run', [
-      'Read the previous candidate and user feedback stored in status/report. You are in the original run, not a new video-review task.',
-      'Use the existing source/manifest and actual media checks to identify a defect. Then action=repair with stage_id script/pilot/produce/qa/content-review and a concrete note.',
-      'Do not submit a success here to skip diagnosis; evidence only records the problem and returns to script conservatively. Missing permission or irreducible ambiguity warrants a user question.',
+    repairStages: ['preflight', 'pilot', 'produce', 'qa'], maxSelfRepairs: 3 }
+  const brief = original.stages[0]
+  const domain = domainGuidance(p.id)
+  p.stages = [
+    stage('preflight', '一次完成任务、来源、能力与口播预检 / One-pass preflight', [
+      ...(brief?.instructions ?? []),
+      ...domain,
+      'Do this as ONE planning pass. The user brief/source document is authoritative input; do not rediscover requirements already written there or split them into additional internal phases.',
+      'If status.input.project.capabilities contains a recent reusable profile, reuse it as a hint and run only one minimal health/probe per external service actually needed. If the user/task already names a service and its probe passes, stop capability discovery. Only on a concrete failure may you try a known alternative; do not survey every provider. Never cache tokens, cookies or credentials.',
+      'Freeze the full spoken script and production.json now. Canonical segments are [{id,text,audio?,start?,end?}]; at preflight only id/text are required. Concatenated segment text must equal the complete canonical script.',
+      'For source-sensitive tasks, summarize the primary-text/evidence boundary in source_truth. Distinguish quoted source, interpretation, and modern application. Unsupported claims remain uncertain.',
+      'Choose the concrete production pipeline once. Record actual capability probes in capability_evidence and reusable non-secret facts in reusable_capabilities.',
+      'Do not promise success, views, spiritual effects, experiment results, or final quality before measurement.',
+    ], [text('task_contract'), text('source_truth'), list('capability_evidence'), list('reusable_capabilities'), text('selected_pipeline'), text('limits')], 'narration'),
+    stage('pilot', '只做一个完整自然段样片 / One natural-segment pilot', [
+      'Use the first segment exact text at natural voice speed. Record segments[0].audio and pilotVideo in production.json.',
+      'Render ONE complete natural segment through the real voice + visual + subtitle pipeline. Do not start the whole film before this passes.',
+      'Batch independent probe calls before waiting. Do not spend separate model turns inspecting every equivalent cosmetic variant.',
+      'Validate actual audio/video. Optional ASR may be used once for the pilot when available; absence/timeout is not a reason for repeated ASR or a new user permission question.',
+    ], [text('pipeline_command'), list('pilot_observations')], 'pilot', 'preflight'),
+    stage('produce', '批量完成全片 / Batch full production', [
+      'Generate all unchanged-independent assets in batches/concurrently where the Host tools permit, then collect results once. Do not do one LLM planning turn per segment or image.',
+      'Use the exact approved segment text. Fill every segment audio,start,end from measured source audio and actual final placement. Natural narration is the timing master; no guessed fixed holds, atempo, looped voice or padded silence to chase a duration target.',
+      'Render final video, cover, title and narration subtitles. Fill video,cover,title,subtitles,durationSeconds,coverForVideoSha256 in production.json.',
+      'Use playbook build for the actual final assembly command and exact output path so the final bytes have a same-run production witness.',
+      'Do not individually vision-review every source image by default. Review representative/critical source assets only; the final QA contact sheet is the main visual batch review.',
+      'Reuse unchanged validated same-run assets. A caption/layout/mux fix must not trigger new TTS or image generation without evidence that those assets are defective.',
+    ], [text('production_manifest'), list('deliverables'), text('production_summary')], null, 'pilot'),
+    stage('qa', '一次技术验收＋批量内容审查＋自动交付 / One QA and delivery pass', [
+      'First submit production_manifest to the independent validator. Static manifest problems are returned together when possible; fix all reported fields in one edit before resubmitting.',
+      'For visual review, generate ONE representative contact sheet from the final video (for example 8–16 evenly spaced frames) and inspect it once. Inspect individual frames only for a concrete defect found in that sheet.',
+      'If speech semantics need ASR, run at most one full-film transcription and at most one targeted retry for a specific suspicious segment. If it times out/unavailable, use script/subtitle/timing/audio evidence and mark semantics unverified rather than changing parameters repeatedly.',
+      'Check first/middle/final content, title/cover, subtitles and promised points. A progress bar/timestamp alone is not meaningful content. Record timestamped observations and explicit unverified items.',
+      'On a failed validator, follow the exact diagnostic code/path/hint and make the smallest state-changing fix. Never reread the same unchanged manifest repeatedly or inspect plugin source to infer hidden contracts.',
+      'A passed terminal QA creates the candidate and triggers fixed-snapshot delivery automatically. There is no separate handoff stage and no extra user approval before presentation; user acceptance remains separate.',
+    ], [list('timestamped_observations'), text('semantic_review_status'), text('unverified_items'), text('limitations')], 'video', 'produce'),
+    stage('diagnose', '用户退回后只定位最小返修点 / Diagnose the smallest revision', [
+      'Read the previous candidate and stored user feedback in status/report. Stay in the same run.',
+      'Identify the concrete defect and use action=repair to preflight/pilot/produce/qa. Preserve all unaffected accepted work and cached capabilities.',
+      'Do not rerun the full pipeline merely because the candidate was rejected. Missing permission or genuinely ambiguous requirements warrant one user question.',
     ], [text('defect'), list('evidence')], null),
   ]
-  // Revision diagnosis is off the normal success path.
   for (let i=0; i<p.stages.length; i++) p.stages[i].next = p.stages[i+1]?.id ?? null
-  p.stages.find(s => s.id === 'handoff').next = null
-  p.delivery.repairStages = [...domainStages(p.id).map(s=>s.id), ...p.delivery.repairStages]
-  p.stages.find(s => s.id === 'diagnose').next = domainStages(p.id)[0]?.id ?? 'script'
+  p.stages.find(s => s.id === 'qa').next = null
+  p.stages.find(s => s.id === 'diagnose').next = 'preflight'
   return p
 }

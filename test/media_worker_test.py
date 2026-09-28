@@ -92,6 +92,25 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(result['manifestNormalization']['source'], 'segmentTiming')
         self.assertEqual(result['manifestNormalization']['copiedFieldCount'], 6)
 
+    def test_static_manifest_lint_collects_multiple_fields_before_decode(self):
+        def change(m):
+            m['segments'][0].pop('audio')
+            m['segments'][1].pop('audio')
+            m['segments'][1].pop('start')
+            m.pop('cover')
+            m.pop('title')
+            m.pop('subtitles')
+        result = self.check('video', change)
+        self.assertFalse(result['passed'])
+        paths = [row['path'] for row in result['diagnostics']]
+        self.assertIn('segments[0].audio', paths)
+        self.assertIn('segments[1].audio', paths)
+        self.assertIn('segments[1].start/end', paths)
+        self.assertIn('cover', paths)
+        self.assertIn('title', paths)
+        self.assertIn('subtitles', paths)
+        self.assertNotIn('video', paths)
+
     def test_missing_segment_audio_names_exact_manifest_field(self):
         result = self.check('video', lambda m: m['segments'][1].pop('audio'))
         self.assertFalse(result['passed'])

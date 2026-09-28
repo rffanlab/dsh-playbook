@@ -10,7 +10,7 @@ export function recoveryFor(stageId, failures, book) {
   const text = (failures ?? []).join('\n')
   let target, code, instruction
   if (/NARRATION_STALE|NARRATION_COVERAGE/.test(text)) {
-    target = 'script'; code = 'narration'; instruction = 'Reconcile the full script and exact segment text here. Reuse unchanged same-run audio; regenerate only changed text. Do not loop through produce/qa.'
+    target = book.stages.some(s => s.id === 'preflight') ? 'preflight' : 'script'; code = 'narration'; instruction = 'Reconcile the full script and exact segment text in the earliest narration stage. Reuse unchanged same-run audio; regenerate only changed text. Do not loop through produce/qa.'
   } else if (/QA_STALE/.test(text)) {
     target = 'qa'; code = 'qa-stale'; instruction = 'Recheck the current files at qa. A stale snapshot alone is not a reason to regenerate audio, images or the whole video.'
   } else if (/SUBTITLE_|SRT time ranges|SRT block|SRT has no|subtitle/i.test(text) && !/audio|RUN_|CROSS_RUN|OWNERSHIP/.test(text)) {
@@ -81,17 +81,17 @@ export class WorkflowEngine extends IsolatedPlaybookEngine {
       if (recent[i].name !== tail.name || recent[i].argumentHash !== tail.argumentHash) break
       repeated += 1
     }
-    status.activity = { stageToolCalls: calls, nonBlocking: true,
+    const softBudget = ({ preflight:12, pilot:10, produce:36, qa:14, diagnose:8 })[run.stageId] ?? 32
+    status.activity = { stageToolCalls: calls, softToolBudget: softBudget, nonBlocking: true,
       ...(repeated >= 2 ? { repeatedCall: { tool: tail.name, count: repeated, argumentHash: tail.argumentHash } } : {}) }
-    if (run.state === 'active' && repeated >= 3) status.activity.notice = `NO_PROGRESS_REPEAT: ${tail.name} was called ${repeated} consecutive times with identical arguments. The bytes/result did not become new evidence. Use the last Gate's exact field/code, change the relevant artifact/metadata, or choose a different diagnostic action; do not issue the same inspection again.`
-    else if (run.state === 'active' && calls >= 32 && run.stageId === 'pilot') status.activity.notice = `This pilot stage has ${calls} observed tool results. Finish ONE complete natural segment; do not batch the whole film or repeatedly repaint minor details here. Reuse unchanged verified same-run assets. This notice does not cancel jobs or change quality gates.`
-    else if (run.state === 'active' && calls >= 32) status.activity.notice = `This ${run.stageId} stage has ${calls} observed tool results. Check for no-progress inspection loops. Prefer the Gate's structured diagnostic and make the smallest state-changing fix; do not reread unchanged inputs merely to think again.`
+    if (run.state === 'active' && repeated >= 3) status.activity.notice = `NO_PROGRESS_REPEAT: ${tail.name} was called ${repeated} consecutive times with identical arguments. The bytes/result did not become new evidence. Change state or choose a different diagnostic action; do not issue the same inspection again.`
+    else if (run.state === 'active' && calls >= softBudget) status.activity.notice = `EFFICIENCY_BUDGET: stage ${run.stageId} has ${calls} observed tool results (soft target ${softBudget}). Finish the current objective using batched/concurrent independent work, cached project capabilities and the Gate's structured diagnostics. Do not add optional exploration or one-tool-per-asset review unless a concrete defect requires it.`
     if (status.lastGate?.recovery) status.recovery = status.lastGate.recovery
     return status
   }
   policyDecision(id, name, controller = 'playbook', args) {
     const run = this.runs.get(String(id)), state = run?.state
-    if (run?.lastGate?.passed === false && ['read','grep','glob'].includes(name)) {
+    if (run && ['read','grep','glob'].includes(name)) {
       const hash = argumentFingerprint(args)
       const recent = (run.recentToolCalls ?? []).filter(row => row.stageId === run.stageId && row.epoch === (run.stageEpoch ?? 0))
       let repeated = 0
@@ -100,8 +100,8 @@ export class WorkflowEngine extends IsolatedPlaybookEngine {
         repeated += 1
       }
       if (repeated >= 3) {
-        const failure = run.lastGate.failures?.[0] ?? 'the last Gate remains failed'
-        return `NO_PROGRESS_REPEAT: the exact same ${name} call already completed ${repeated} consecutive times after a failed Gate. Last Gate: ${failure}. Do not inspect the same input again; apply the named fix, use a different diagnostic, or read playbook status detail=full once.`
+        const failure = run.lastGate?.failures?.[0] ?? 'no new state change has occurred'
+        return `NO_PROGRESS_REPEAT: the exact same ${name} call already completed ${repeated} consecutive times in this stage. Current signal: ${failure}. Do not inspect the same unchanged input again; change state, batch the remaining inspection, use a different diagnostic, or read playbook status once.`
       }
     }
     if (['awaiting_review','failed','blocked'].includes(state) &&

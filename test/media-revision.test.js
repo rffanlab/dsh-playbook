@@ -57,11 +57,10 @@ test('script hashes pin cross-stage content, not a mutable manifest filename',as
   const out=await e.submit('s',{evidence:evidenceFor(e.currentStage('s')),runtimeChecks:[changed]})
   assert.match(out.lastGate.failures.join(' '),/NARRATION_STALE/)
 })
-test('handoff rechecks exactly the QA bindings',async()=>{
-  const e=await engineFixture();await advance(e,'handoff');const changed=mockCheck('handoff')
-  changed.bindings['/fixture/video.mp4'].sha256='b'.repeat(64)
-  const out=await e.submit('s',{evidence:evidenceFor(e.currentStage('s')),runtimeChecks:[changed]})
-  assert.equal(out.lastGate.passed,false);assert.match(out.lastGate.failures.join(' '),/QA_STALE/)
+test('terminal QA is the only final media gate and creates a review candidate directly',async()=>{
+  const e=await engineFixture();await advance(e,'qa');const out=await e.submit('s',{stageId:'qa',evidence:evidenceFor(e.currentStage('s')),runtimeChecks:[mockCheck('video')]})
+  assert.equal(out.lastGate.passed,true);assert.equal(out.run.state,'awaiting_review')
+  assert.equal(e.currentStage('s')?.id,'qa') // terminal stage remains inspectable while awaiting review
 })
 test('candidate is awaiting review, not automatically accepted',async()=>{
   const e=await engineFixture();await advance(e)
@@ -72,7 +71,7 @@ test('user rejection retains the same run, script, prior candidate and factual c
   const e=await engineFixture();await advance(e);const id=e.status('s').run.id, count=e.report('s').summary.gatesPassed
   await e.requestRevision('s','最终成片验收不通过，请自行返修',{messageId:'user-reject-1'})
   assert.equal(e.status('s').run.id,id);assert.equal(e.status('s').run.stageId,'diagnose');assert.equal(e.status('s').run.revision,1)
-  assert.ok(e.status('s').machineEvidence.script);assert.equal(e.status('s').machineEvidence.qa,undefined)
+  assert.ok(e.status('s').machineEvidence.preflight);assert.equal(e.status('s').machineEvidence.qa,undefined)
   assert.equal(e.report('s').summary.gatesPassed,count);assert.equal(e.report('s').summary.humanReviewRejections,1)
   await e.repair('s','produce','Audio chain has a concrete identified mixing fault.')
   assert.equal(e.status('s').run.id,id);assert.equal(e.currentStage('s').id,'produce')
@@ -111,7 +110,7 @@ test('starting another task archives rather than erases prior history, including
 })
 test('system counts derive from stage definitions/events instead of submitted fake numbers',async()=>{
   const e=await engineFixture();await advance(e)
-  const report=e.report('s');assert.equal(report.summary.normalPathStageCount,9);assert.equal(report.summary.declaredStageCount,10);assert.equal(report.summary.gatesPassed,9)
+  const report=e.report('s');assert.equal(report.summary.normalPathStageCount,4);assert.equal(report.summary.declaredStageCount,5);assert.equal(report.summary.gatesPassed,4)
   assert.match(reportMarkdown(report),/not independently|Not independently/);assert.equal(report.summary.humanReviewRejections,0)
 })
 test('long-running validation cannot commit after a stage/revision change',async()=>{
@@ -147,8 +146,8 @@ test('denied/unknown/truncated validator result cannot be treated as passed',asy
   }
 })
 test('model-supplied runtimeChecks are never forwarded as trusted machine output',async()=>{
-  const e=await engineFixture();await advance(e,'script');const t=playbookDefinition(e,async()=>[],new PlaybookRouter(e))
-  const out=await t.execute({action:'submit',stage_id:'script',evidence:evidenceFor(e.currentStage('s')),runtimeChecks:[mockCheck('narration')]},{agent:{id:'s'},signal:new AbortController().signal})
+  const e=await engineFixture();await advance(e,'preflight');const t=playbookDefinition(e,async()=>[],new PlaybookRouter(e))
+  const out=await t.execute({action:'submit',stage_id:'preflight',evidence:evidenceFor(e.currentStage('s')),runtimeChecks:[mockCheck('narration')]},{agent:{id:'s'},signal:new AbortController().signal})
   assert.equal(out.gatePassed,false)
 })
 
@@ -164,7 +163,7 @@ test('report export content/path are engine-owned and only its exact nested writ
   }}}
   const exec={agent:{id:'s'},token:Symbol(),callId:'export',signal:new AbortController().signal}
   const result=await createReportExporter(ctx,e,pending)(exec)
-  assert.match(result.path,/execution-report\.system\.r0\./);assert.match(saved.arguments.content,/"normalPathStageCount": 9/)
+  assert.match(result.path,/execution-report\.system\.r0\./);assert.match(saved.arguments.content,/"normalPathStageCount": 4/)
   assert.equal(result.runId,e.status('s').run.id);assert.equal(pending.size,0)
 })
 test('a failed Host write does not fabricate a saved report or fall back to direct FS',async()=>{

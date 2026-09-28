@@ -2,7 +2,7 @@
 const COMMAND_GATES = new Set(['bug-fix/verify', 'feature-development/verify', 'plugin-development/verify', 'dsh-plugin-development/package-check', 'release/build'])
 export function strengthenPlaybook(input) {
   const playbook = structuredClone(input)
-  playbook.version = '0.7.0'
+  playbook.version = '0.10.0'
   for (const stage of playbook.stages) {
     stage.instructions ??= []
     stage.instructions.push('Complete the actual stage work before reporting evidence. Do not fabricate files, observations or execution results to fill the form. The user deliverable is not the SOP evidence form.')
@@ -36,13 +36,5 @@ const MEDIA_GUIDANCE = {
   qa: [
     'Repair the reported dependency, not the whole movie. Punctuation-only subtitle differences are allowed; missing words, changed numbers, invalid speech-cue timing and unreadable media still fail.',
     'An unchanged cover is not automatically stale. Review its actual claims; keep locked artwork when accurate rather than changing a random pixel. The cover-to-video hash binding still must be current.'
-  ],
-  'content-review': [
-    'Absent ASR/hearing capability is an explicit unverified item, not an invented pass or repeated demand for user decisions. Report this limitation once. Do not treat fluctuating duration alone as proof that TTS omitted words.',
-    'Judge story relationships, not image count. Show quote overlays briefly over continuing story footage without treating visual duration as a speech-duration constraint. Respect the user-specified bounded cosmetic/revision policy.'
-  ],
-  handoff: [
-    'Unchanged artifact bytes and the same material manifest contract reuse verified QA after rehashing; no repeat full decode is needed. Real changes trigger targeted qa revalidation.',
-    'Waiting for user review prevents silent edits, not inspection or presentation: use playbook action=diagnose for read-only measurements. Do not ask the user to cancel the task merely to inspect media.'
   ],
 }
